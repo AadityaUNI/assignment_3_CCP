@@ -1,0 +1,70 @@
+### Secrets — never commit API keys ###
+key.txt
+*.key
+.env
+.env.*
+application-local.properties
+
+### Build output ###
+target/
+build/
+!**/src/main/**/target/
+!**/src/test/**/target/
+!**/src/main/**/build/
+!**/src/test/**/build/
+*.class
+.mvn/wrapper/maven-wrapper.jar
+HELP.md
+
+### Packaged files (the Spring Boot jar is ~800 MB) ###
+*.jar
+*.war
+*.nar
+*.ear
+*.zip
+*.tar.gz
+*.rar
+
+### JVM crash logs and recordings ###
+hs_err_pid*
+replay_pid*
+*.jfr
+
+### Media (loadtest.mp4 is kept for the mvn verify load test) ###
+*.mp4
+!loadtest.mp4
+
+### Personal notes ###
+todo.txt
+todo-assignment2.txt
+changes.txt
+rubric.md
+
+### Leftovers from the two original projects (only IDE settings and build output remain) ###
+/Web Server/
+/VideoPlayerSingleThread/
+
+### IntelliJ IDEA ###
+.idea
+*.iws
+*.iml
+*.ipr
+
+### Eclipse / STS ###
+.apt_generated
+.classpath
+.factorypath
+.project
+.settings
+.springBeans
+.sts4-cache
+
+### NetBeans ###
+/nbproject/private/
+/nbbuild/
+/dist/
+/nbdist/
+/.nb-gradle/
+
+### VS Code ###
+.vscode/

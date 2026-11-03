@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Greeting Human</title>
+    <link rel="stylesheet" href="themes/styles.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+
+    <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <script src="scripts/recordingScript.js"></script>
+</head>
+<body>
+    <main class="flex flex-col">
+        <div style="width: auto; height: fit-content; margin-top: 0; text-align: center; justify-self: flex-start">
+            <p class="introtext">Welcome to the best text-to-speech service on the planet!</p>
+            <span class="introtext" id="textSuggestion">Get started by clicking the red record button below:</span>
+        </div>
+        <div class="flex flex-col" style="justify-self: center; justify-content: center; margin-bottom: 200px; align-items: center">
+            <img id="readyIMG" style="height: 75px; width: auto; margin-top: 20px; margin-bottom: 20px" src="images/micoff.svg" alt="Mic, ready to record">
+
+            <div id="convertDiv" style="display: none">
+                <p id="convertText"></p>
+            </div>
+            <div class="buttonDiv" id="recordDiv"><button id="recordBtn" class="startRec"></button></div>
+            <label for="recordDiv" id="recLabel" class="statusLabel">Start Recording</label>
+        </div>
+    </main>
+</body>
+</html>

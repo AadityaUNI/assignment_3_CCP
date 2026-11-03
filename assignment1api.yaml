@@ -1,0 +1,233 @@
+openapi: 3.1.0
+info:
+  title: Speech-to-Text Web Site Administration and Statistics API
+  version: 1.0.0
+  description: >
+    Administrative and global reporting endpoints for the speech-to-text
+    service for Assignment 1, COMP3011, Adelaide University. The API reports
+    server lifecycle information, global token usage since the current UTC
+    server start, and exposes an operation for requesting graceful server
+    shutdown. Authentication is intentionally not specified.
+    (c) Adelaide University 2026
+servers:
+  - url: http://localhost:8080
+    description: Local development server and endpoint testing host
+tags:
+  - name: Administration
+    description: Server lifecycle and administrative operations.
+  - name: Global Statistics
+    description: Aggregate service usage counters since UTC server start.
+paths:
+  /api/v1/admin/uptime:
+    get:
+      tags:
+        - Administration
+      operationId: getServerUptime
+      summary: Retrieve server uptime
+      description: >
+        Returns the UTC timestamp at which the server started, the current UTC
+        timestamp when the response is generated, and the server uptime in
+        seconds. The uptime is computed as the difference between the current
+        UTC timestamp and the UTC server start timestamp.
+      responses:
+        "200":
+          description: Server uptime was retrieved successfully.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UptimeResponse"
+              examples:
+                success:
+                  summary: Example uptime response
+                  value:
+                    utcServerStart: "2026-07-14T01:15:30Z"
+                    utcNow: "2026-07-14T03:45:30.500Z"
+                    serverUptimeSeconds: 9000.5
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+  /api/v1/admin/shutdown:
+    post:
+      tags:
+        - Administration
+      operationId: shutdownServer
+      summary: Gracefully shut down the server
+      description: >
+        Requests a graceful shutdown of the server. A successful response means
+        the shutdown request has been accepted and the server has begun, or will
+        shortly begin, its graceful shutdown sequence. Existing in-flight work
+        should be allowed to complete according to the server's configured
+        graceful shutdown policy.
+      responses:
+        "202":
+          description: Graceful shutdown request was accepted.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ShutdownResponse"
+              examples:
+                accepted:
+                  summary: Example shutdown response
+                  value:
+                    message: "Graceful shutdown requested."
+        "409":
+          description: Shutdown could not be accepted because shutdown is already in progress.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                shutdownInProgress:
+                  summary: Shutdown already in progress
+                  value:
+                    timestamp: "2026-07-14T03:45:30Z"
+                    status: 409
+                    error: "Conflict"
+                    message: "Graceful shutdown is already in progress."
+                    path: "/api/v1/admin/shutdown"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+  /api/v1/global/stats:
+    get:
+      tags:
+        - Global Statistics
+      operationId: getGlobalStats
+      summary: Retrieve global token usage statistics
+      description: >
+        Returns cumulative input and output token usage for the speech-to-text
+        Cloud service since the current UTC server start. Counters reset when
+        the server process restarts.
+      responses:
+        "200":
+          description: Global token usage statistics were retrieved successfully.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GlobalStatsResponse"
+              examples:
+                success:
+                  summary: Example global statistics response
+                  value:
+                    inputTokens: 18432
+                    outputTokens: 4096
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+components:
+  responses:
+    InternalServerError:
+      description: An unexpected server error occurred.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          examples:
+            internalServerError:
+              summary: Example internal server error
+              value:
+                timestamp: "2026-07-14T03:45:30Z"
+                status: 500
+                error: "Internal Server Error"
+                message: "An unexpected server error occurred."
+                path: "/api/v1/admin/uptime"
+  schemas:
+    UptimeResponse:
+      type: object
+      description: Server uptime information calculated from UTC server start.
+      additionalProperties: false
+      required:
+        - utcServerStart
+        - utcNow
+        - serverUptimeSeconds
+      properties:
+        utcServerStart:
+          type: string
+          format: date-time
+          description: UTC timestamp at which the server process started, encoded as RFC 3339.
+          examples:
+            - "2026-07-14T01:15:30Z"
+        utcNow:
+          type: string
+          format: date-time
+          description: Current UTC timestamp at response generation time, encoded as RFC 3339.
+          examples:
+            - "2026-07-14T03:45:30.500Z"
+        serverUptimeSeconds:
+          type: number
+          format: double
+          minimum: 0
+          description: Floating point number of seconds between utcServerStart and utcNow.
+          examples:
+            - 9000.5
+    ShutdownResponse:
+      type: object
+      description: Confirmation that a graceful shutdown request was accepted.
+      additionalProperties: false
+      required:
+        - message
+      properties:
+        message:
+          type: string
+          description: Human-readable shutdown acknowledgement.
+          examples:
+            - "Graceful shutdown requested."
+    GlobalStatsResponse:
+      type: object
+      description: Global speech-to-text Cloud service token usage since UTC server start.
+      additionalProperties: false
+      required:
+        - inputTokens
+        - outputTokens
+      properties:
+        inputTokens:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Total input tokens consumed by the speech-to-text Cloud service since UTC server start.
+          examples:
+            - 18432
+        outputTokens:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Total output tokens produced by the speech-to-text Cloud service since UTC server start.
+          examples:
+            - 4096
+    ErrorResponse:
+      type: object
+      description: Standard JSON error response returned when an operation fails.
+      additionalProperties: false
+      required:
+        - timestamp
+        - status
+        - error
+        - message
+        - path
+      properties:
+        timestamp:
+          type: string
+          format: date-time
+          description: UTC timestamp at which the error response was generated, encoded as RFC 3339.
+          examples:
+            - "2026-07-14T03:45:30Z"
+        status:
+          type: integer
+          format: int32
+          minimum: 400
+          maximum: 599
+          description: HTTP status code associated with the error.
+          examples:
+            - 500
+        error:
+          type: string
+          description: Short HTTP reason phrase or error classification.
+          examples:
+            - "Internal Server Error"
+        message:
+          type: string
+          description: Human-readable description of the failure.
+          examples:
+            - "An unexpected server error occurred."
+        path:
+          type: string
+          description: Request path that produced the error.
+          examples:
+            - "/api/v1/admin/uptime"
