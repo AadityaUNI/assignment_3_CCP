@@ -13,7 +13,7 @@ package comp3011.frameprocessors;
 public record InfoFrame(
         int frameNumber,
         long timestampUs, Subtitle subs) {
-        InfoFrame(int f, int t) {
+        public InfoFrame(int f, long t) {
             this(f, t, null); // backwards compatible
         }
 }

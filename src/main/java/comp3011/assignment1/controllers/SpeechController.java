@@ -1,9 +1,7 @@
 package comp3011.assignment1.controllers;
 
+import comp3011.assignment1.models.*;
 import comp3011.assignment1.services.SpeechService;
-import comp3011.assignment1.models.GlobalStatsResponse;
-import comp3011.assignment1.models.ShutdownResponse;
-import comp3011.assignment1.models.UptimeResponse;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
@@ -22,6 +20,11 @@ public class SpeechController {
         return service.textFromSpeechHelper(audioBytes);
     }
 
+    @PostMapping(value = "/api/v1/subtitles", consumes = "audio/wav")
+    SubtitleResponse getSubtitles(@RequestBody byte[] audioBytes) throws IOException {
+        return service.subtitleHelper(audioBytes);
+    }
+
     @GetMapping("/api/v1/admin/uptime")
     UptimeResponse getUptime() {
         return service.uptimeHelper();
@@ -35,5 +38,10 @@ public class SpeechController {
     @GetMapping("/api/v1/global/stats")
     GlobalStatsResponse globalStats() {
         return service.statsHelper();
+    }
+
+    @GetMapping("/api/v1/global/usage")
+    UsageResponse subtitleUsage() {
+        return new UsageResponse(service.getSubtitleUsage());
     }
 }

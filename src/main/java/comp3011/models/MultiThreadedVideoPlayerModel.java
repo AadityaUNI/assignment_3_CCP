@@ -37,9 +37,15 @@ import comp3011.frameprocessors.InfoVideo;
 
 import java.io.ByteArrayOutputStream;
 import java.io.File;
+import java.io.IOException;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.ShortBuffer;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
@@ -51,7 +57,9 @@ import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.BiConsumer;
 import java.util.function.Consumer;
 
+import comp3011.assignment1.models.SubtitleResponse;
 import comp3011.frameprocessors.Subtitle;
+import tools.jackson.databind.json.JsonMapper;
 import org.bytedeco.javacv.FFmpegFrameGrabber;
 import org.bytedeco.javacv.Frame;
 import org.bytedeco.javacv.FrameGrabber;
@@ -226,6 +234,10 @@ public class MultiThreadedVideoPlayerModel implements VideoPlayerModel {
     // Started and stopped by the FX thread, like decodeThread. Never touches the playback grabber.
     private Thread audioDecodeThread;
 
+    private static final HttpClient HTTP = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(3)).build();
+    // JsonMapper is thread-safe once built, so every subtitle worker shares this one.
+    private static final JsonMapper JSON = JsonMapper.builder().build();
+    private static final URI subtitleURI = URI.create("http://localhost:8080/api/v1/subtitles");
     // workers keep taking the next uncaptioned segment in the file,
     // pass it into the subtitles api, store result in the cache with each segment floored.
 
@@ -462,6 +474,7 @@ public class MultiThreadedVideoPlayerModel implements VideoPlayerModel {
 
     // Returns one chunk's audio as 16-bit little-endian PCM. Seeks to the chunk start, keeps every audio frame that
     // starts inside the chunk, and stops at the first frame that belongs to the next one.
+    // used Claude to help write the content of this function
     private byte[] decodeAudioChunk(FFmpegFrameGrabber audioGrabber, long chunk) throws Exception {
         long chunkStartUs = chunk * segmentLength;
         long chunkEndUs = chunkStartUs + segmentLength;
@@ -500,7 +513,8 @@ public class MultiThreadedVideoPlayerModel implements VideoPlayerModel {
             // take the next one
             long currentChunk = currentTimestampUs / segmentLength;
             Long next = pendingChunks.ceiling(currentChunk);
-            if (next != null) {
+            // we can process subtitles if:
+            if (next != null && audioChunks.containsKey(next)) {
                 pendingChunks.remove(next);
                 try {
                     processChunk(next);
@@ -514,7 +528,71 @@ public class MultiThreadedVideoPlayerModel implements VideoPlayerModel {
     // calls for processing this chunk through our api
     // gets the audio chunk from the other grabber working alongside
     private void processChunk(Long next) {
+        // next is the starting of the segment
+        byte[] segment = audioChunks.get(next);
+        byte[] wavBytes = convertWav(segment);
+        HttpRequest request = HttpRequest.newBuilder(subtitleURI)
+                .timeout(Duration.ofSeconds(60))
+                .header("Content-Type", "audio/wav")
+                .POST(HttpRequest.BodyPublishers.ofByteArray(wavBytes))
+                .build();
 
+        try {
+            HttpResponse<String> response = HTTP.send(request, HttpResponse.BodyHandlers.ofString());
+            if (response.statusCode() == 200) {
+                // Jackson fills the record straight from {"subs":[{"text":..,"start":..,"end":..}]}.
+                // A malformed body throws (unchecked) and lands in the catch below, so the chunk is retried.
+                Subtitle[] parsed = JSON.readValue(response.body(), SubtitleResponse.class).subs();
+
+                // The server timed the audio from 0 because we sent it just this chunk, but the player's clock
+                // is in whole-file time, so shift each subtitle by where this chunk starts (seconds).
+                double chunkStartSec = next * segmentLength / 1_000_000.0;
+                Subtitle[] shifted = new Subtitle[parsed.length];
+                for (int i = 0; i < parsed.length; i++) {
+                    shifted[i] = new Subtitle(parsed[i].text(), parsed[i].start() + chunkStartSec,
+                            parsed[i].end() + chunkStartSec);
+                }
+                subtitleCache.put(next, shifted);
+            } else {
+                pendingChunks.add(next);
+            }
+        } catch (Exception e) {
+            pendingChunks.add(next);
+        }
+    }
+
+    // Whisper needs a real audio file, not bare samples, so this puts the standard 44-byte WAV (RIFF) header in front
+    // of the chunk's raw PCM. The header just describes the format the audio decoder already produced:
+    // 16 kHz, mono, signed 16-bit little-endian. Header layout written with AI help (Claude).
+    private byte[] convertWav(byte[] segment) {
+        final int channels = 1;
+        final int bitsPerSample = 16;
+        final int blockAlign = channels * bitsPerSample / 8;            // bytes per sample frame (2)
+        final int byteRate = SUBTITLE_AUDIO_SAMPLE_RATE * blockAlign;   // bytes per second of audio (32,000)
+
+        ByteBuffer wav = ByteBuffer.allocate(44 + segment.length).order(ByteOrder.LITTLE_ENDIAN); // WAV is little-endian
+
+        // RIFF chunk: says "this is a WAVE file" and how big the rest of it is.
+        wav.put("RIFF".getBytes(java.nio.charset.StandardCharsets.US_ASCII));
+        wav.putInt(36 + segment.length);          // file size minus the 8 bytes of "RIFF" + this field
+        wav.put("WAVE".getBytes(java.nio.charset.StandardCharsets.US_ASCII));
+
+        // fmt chunk: how to read the samples.
+        wav.put("fmt ".getBytes(java.nio.charset.StandardCharsets.US_ASCII));
+        wav.putInt(16);                           // size of this fmt chunk for plain PCM
+        wav.putShort((short) 1);                  // audio format 1 = uncompressed PCM
+        wav.putShort((short) channels);
+        wav.putInt(SUBTITLE_AUDIO_SAMPLE_RATE);
+        wav.putInt(byteRate);
+        wav.putShort((short) blockAlign);
+        wav.putShort((short) bitsPerSample);
+
+        // data chunk: the samples themselves, copied unchanged.
+        wav.put("data".getBytes(java.nio.charset.StandardCharsets.US_ASCII));
+        wav.putInt(segment.length);
+        wav.put(segment);
+
+        return wav.array();
     }
 
     // Interrupts every subtitle worker and waits briefly for them to exit, then swaps in a fresh pool so the next
