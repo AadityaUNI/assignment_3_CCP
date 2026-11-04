@@ -41,6 +41,8 @@ public interface VideoPlayerModel {
 
     void shutdown();
 
+    boolean toggleSubtitles();
+
     // Measurement only: lets the load test time every frame shown. Pass FrameTimingListener.NONE to stop.
     void setFrameTimingListener(FrameTimingListener listener);
 }

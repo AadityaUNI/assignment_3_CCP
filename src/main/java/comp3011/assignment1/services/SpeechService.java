@@ -139,7 +139,9 @@ public class SpeechService {
                 Files.deleteIfExists(copy);
             }
         }
-        return null;
+        // Whisper found no segments/words (e.g. a silent chunk): an empty list tells the player "nothing to show here"
+        // so it caches that and moves on, instead of getting an empty body and retrying forever.
+        return new SubtitleResponse(new Subtitle[0]);
     }
 
     void finishSegment(List<Subtitle> processed, StringBuilder currText, double start, double end) {
@@ -182,7 +184,12 @@ public class SpeechService {
             }
 
             for (String w : parts) {
+                if (wordIndex >= words.size()) break; // incorrect index
                 double wEnd = words.get(wordIndex).end(); double wStart = words.get(wordIndex).start();
+                if (!inRange(wStart, wEnd, segStart, segEnd)) {
+                    break; // next segment's words, caused by unequal length arrays
+                }
+                wordIndex++; // always process the current word.
                 System.out.println("LastSegStart: " + lastSegStart + " before word: " + w);
                 // word limit exceeded or word end doesn't fit the last segment duration, END PREV SEGMENT
                 if (currText.toString().strip().length() + w.length() >= 84 || !inRange(wStart, wEnd, lastSegStart, lastSegStart + MAX_SEG_DURATION)) {
@@ -198,7 +205,6 @@ public class SpeechService {
                 currText.append(w).append(' ');
                 wordCount++;
                 lastWordEnd = wEnd;
-                wordIndex++; // always process the current word.
                 // check if current word is a punctuation end
                 if (w.matches(".*[.,!?;:]") && wordCount >= PUNCTUATOR_THRESHOLD && wEnd >= lastSegStart + MIN_SEG_DURATION)  {
                     // ends with a punctuator, end current segment

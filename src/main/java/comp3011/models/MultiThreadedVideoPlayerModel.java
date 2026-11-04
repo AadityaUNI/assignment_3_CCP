@@ -1,7 +1,7 @@
 /*
  * Starter code supplied for Adelaide University COMP3011 Assignment 2.
  * Students are free to modify this file for assessment purposes.
- * 
+ *
  * Authors:
  *   1. Simon Ratcliffe, in collaboration with GPT-5.6 Terra
  *   2. Aaditya Singh, A1946894
@@ -32,6 +32,7 @@
 package comp3011.models;
 
 import comp3011.frameprocessors.FrameProcessor;
+import comp3011.frameprocessors.FrameSubtitler;
 import comp3011.frameprocessors.InfoFrame;
 import comp3011.frameprocessors.InfoVideo;
 
@@ -73,35 +74,35 @@ import javafx.scene.image.WritableImage;
 /**
  * The multi-threaded implementation of VideoPlayerModel. This is the default model; --single selects the
  * original single-threaded one instead.
- *
+ * <p>
  * Architecture: a three-stage pipeline keeps decoding and the expensive effects off the JavaFX Application
  * Thread (the "FX thread"), which only displays frames and stays responsive:
- *
- *   decode thread  --decodedFrames-->  effect workers  --processedFrames-->  FX thread
- *   (grab + stamp)    (bounded queue)  (processingPool:   (priority queue)   (pumpPlayback:
- *                                       effects+convert)                     audio + display)
- *
- *   - FX thread: owns control (play, pause, seek, stop), the clock, audio output and when each frame is shown.
- *     pumpPlayback runs on the AnimationTimer and never blocks.
- *   - Decode thread ("video-decoder"): the only thread that grabs during playback; queues audio, hands video
- *     frames to the pool.
- *   - Effect workers (processingPool): run the FrameProcessor stack on a private frame copy and convert it to an
- *     image. Frames finish out of order.
- *
+ * <p>
+ * decode thread  --decodedFrames-->  effect workers  --processedFrames-->  FX thread
+ * (grab + stamp)    (bounded queue)  (processingPool:   (priority queue)   (pumpPlayback:
+ * effects+convert)                     audio + display)
+ * <p>
+ * - FX thread: owns control (play, pause, seek, stop), the clock, audio output and when each frame is shown.
+ * pumpPlayback runs on the AnimationTimer and never blocks.
+ * - Decode thread ("video-decoder"): the only thread that grabs during playback; queues audio, hands video
+ * frames to the pool.
+ * - Effect workers (processingPool): run the FrameProcessor stack on a private frame copy and convert it to an
+ * image. Frames finish out of order.
+ * <p>
  * Ownership and critical regions: every piece of shared state has one owner or one guard.
- *   - grabberLock guards the grabber, held from grab() until the frame is cloned and stamped, and around a seek.
- *     Nothing blocks while holding it, so the FX thread can always take it.
- *   - The playback clock, nextDisplayIndex and the pause state belong to the FX thread alone.
- *   - pendingAudio is a concurrent queue: the decode thread adds (under the lock), the FX thread drains.
- *   - Workers own a cloned frame each, so pixels are never shared. The FrameProcessors are shared, so process()
- *     keeps per-frame state in locals.
- *
+ * - grabberLock guards the grabber, held from grab() until the frame is cloned and stamped, and around a seek.
+ * Nothing blocks while holding it, so the FX thread can always take it.
+ * - The playback clock, nextDisplayIndex and the pause state belong to the FX thread alone.
+ * - pendingAudio is a concurrent queue: the decode thread adds (under the lock), the FX thread drains.
+ * - Workers own a cloned frame each, so pixels are never shared. The FrameProcessors are shared, so process()
+ * keeps per-frame state in locals.
+ * <p>
  * Permit invariant: framesInFlight bounds frames anywhere in the pipeline. Each permit is taken by the decoder and
  * returned exactly once when the frame is shown or dropped; all permits back = pipeline empty.
- *
+ * <p>
  * Seek generations: a seek bumps seekGeneration instead of chasing frames through workers. Frames carry their
  * generation and are dropped wherever found stale; processedFrames sorts by generation, then index.
- *
+ * <p>
  * Errors and shutdown: background errors go to the FX thread via runLater and are re-checked so an old session
  * can't close a new one. closePlaybackResources() stops the decoder, invalidates, waits for the pipeline to drain,
  * then closes resources. See README.md for the full correctness argument.
@@ -214,6 +215,7 @@ public class MultiThreadedVideoPlayerModel implements VideoPlayerModel {
 
     // Subtitle Worker Settings
     private final long segmentLength = 30_000_000L; // microseconds (30 s)
+    private static final double MIN_SUBTITLE_SECONDS = 1.0; // the brief asks for subtitles to stay up at least 1 s
     private final int subThreads = 3;
     private final ConcurrentHashMap<Long, Subtitle[]> subtitleCache = new ConcurrentHashMap<>();
     // Chunk indexes still to fetch (chunk i covers [i * segmentLength, (i + 1) * segmentLength) seconds). Sorted, so
@@ -228,6 +230,7 @@ public class MultiThreadedVideoPlayerModel implements VideoPlayerModel {
     // byte[] is fully written before it is put and never changed after, so readers need no extra locking.
     private static final int SUBTITLE_AUDIO_SAMPLE_RATE = 16_000;
     private static final long AUDIO_IDLE_SLEEP_MS = 200; // how often the audio decoder rechecks when nothing is ahead
+    private static final long SUBTITLE_IDLE_SLEEP_MS = 200; // same for subtitle workers waiting for a chunk or its audio
     private final ConcurrentHashMap<Long, byte[]> audioChunks = new ConcurrentHashMap<>();
     // Chunk indexes whose audio hasn't been decoded yet. Same grid as pendingChunks.
     private final ConcurrentSkipListSet<Long> pendingAudioChunks = new ConcurrentSkipListSet<>();
@@ -240,7 +243,7 @@ public class MultiThreadedVideoPlayerModel implements VideoPlayerModel {
     private static final URI subtitleURI = URI.create("http://localhost:8080/api/v1/subtitles");
     // workers keep taking the next uncaptioned segment in the file,
     // pass it into the subtitles api, store result in the cache with each segment floored.
-
+    public volatile boolean subtitlesOn;
 
     public MultiThreadedVideoPlayerModel(
             boolean audioEnabled,
@@ -249,7 +252,8 @@ public class MultiThreadedVideoPlayerModel implements VideoPlayerModel {
             Consumer<String> statusChangedHandler,
             BiConsumer<Boolean, Boolean> playbackStateChangedHandler,
             Consumer<Boolean> audioOutputStateChangedHandler,
-            ArrayList<FrameProcessor> processors) {
+            ArrayList<FrameProcessor> processors,
+            boolean subtitlesOn) {
         audioOutputEnabled = audioEnabled;
         this.videoSizeChangedHandler = videoSizeChangedHandler;
         this.frameReadyHandler = frameReadyHandler;
@@ -257,6 +261,7 @@ public class MultiThreadedVideoPlayerModel implements VideoPlayerModel {
         this.playbackStateChangedHandler = playbackStateChangedHandler;
         this.audioOutputStateChangedHandler = audioOutputStateChangedHandler;
         this.frameProcessors = processors;
+        this.subtitlesOn = subtitlesOn;
     }
 
     public void play(File file) {
@@ -411,9 +416,10 @@ public class MultiThreadedVideoPlayerModel implements VideoPlayerModel {
         for (long chunk = 0; chunk < chunkCount; chunk++) {
             if (!subtitleCache.containsKey(chunk)) {
                 pendingChunks.add(chunk);
-            }
-            if (!audioChunks.containsKey(chunk)) {
-                pendingAudioChunks.add(chunk);
+                // Only decode audio for chunks that still need subtitles; cached ones had their audio dropped.
+                if (!audioChunks.containsKey(chunk)) {
+                    pendingAudioChunks.add(chunk);
+                }
             }
         }
     }
@@ -508,20 +514,27 @@ public class MultiThreadedVideoPlayerModel implements VideoPlayerModel {
         }
     }
 
+    // Runs until stopSubtitleThreads() interrupts it. It does not stop when pendingChunks is empty, because a chunk
+    // that fails to send is put back there later and some worker must still be around to retry it.
     private void subtitleLoop() {
-        while (!pendingChunks.isEmpty() && !Thread.currentThread().isInterrupted()) {
-            // take the next one
-            long currentChunk = currentTimestampUs / segmentLength;
-            Long next = pendingChunks.ceiling(currentChunk);
-            // we can process subtitles if:
-            if (next != null && audioChunks.containsKey(next)) {
-                pendingChunks.remove(next);
-                try {
-                    processChunk(next);
-                } catch (Exception e) {
-                    System.out.println(e.toString());
+        try {
+            while (!Thread.currentThread().isInterrupted()) {
+                // take the next one
+                long currentChunk = currentTimestampUs / segmentLength;
+                Long next = pendingChunks.ceiling(currentChunk);
+                // we can process a chunk if its audio is decoded, and only the worker whose remove() wins may do it
+                if (next != null && audioChunks.containsKey(next) && pendingChunks.remove(next)) {
+                    try {
+                        processChunk(next);
+                    } catch (Exception e) {
+                        System.out.println(e.toString());
+                    }
+                } else {
+                    Thread.sleep(SUBTITLE_IDLE_SLEEP_MS); // nothing ready yet: wait instead of spinning
                 }
             }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt(); // stopping: just leave
         }
     }
 
@@ -553,9 +566,14 @@ public class MultiThreadedVideoPlayerModel implements VideoPlayerModel {
                             parsed[i].end() + chunkStartSec);
                 }
                 subtitleCache.put(next, shifted);
+                audioChunks.remove(next); // subtitles are cached, so the raw audio (about 1 MB per chunk) isn't needed
             } else {
                 pendingChunks.add(next);
             }
+        } catch (InterruptedException e) {
+            // send() clears the interrupt flag when it throws this, so set it again or subtitleLoop would never stop
+            pendingChunks.add(next);
+            Thread.currentThread().interrupt();
         } catch (Exception e) {
             pendingChunks.add(next);
         }
@@ -833,6 +851,31 @@ public class MultiThreadedVideoPlayerModel implements VideoPlayerModel {
         return null;
     }
 
+    // Returns the subtitle on screen at this media time, or null. The cache holds one array per 30 s chunk, so go to
+    // the chunk this time falls in and pick the subtitle whose start..end range contains it. A null chunk means it
+    // hasn't arrived yet (or the service is down): show nothing and let playback carry on.
+    private Subtitle findSubtitleAt(long timestampUs) {
+        Subtitle[] chunk = subtitleCache.get(timestampUs / segmentLength);
+        if (chunk == null) {
+            return null;
+        }
+        double seconds = timestampUs / 1_000_000.0; // Subtitle times are in seconds
+        for (int i = 0; i < chunk.length; i++) {
+            Subtitle subtitle = chunk[i];
+            double shownUntil = subtitle.end();
+            double minimumUntil = subtitle.start() + MIN_SUBTITLE_SECONDS;
+            if (shownUntil < minimumUntil) {
+                // Too short to read: hold it for the minimum time, but never into the next subtitle's start.
+                double limit = i + 1 < chunk.length ? Math.min(minimumUntil, chunk[i + 1].start()) : minimumUntil;
+                shownUntil = Math.max(shownUntil, limit);
+            }
+            if (seconds >= subtitle.start() && seconds <= shownUntil) {
+                return subtitle;
+            }
+        }
+        return null;
+    }
+
     // Pool worker, one task per decoded frame. poll() not take(): a seek may have drained the queue.
     private void processNextDecodedFrame() {
         DecodedFrame decoded = decodedFrames.poll();
@@ -846,7 +889,12 @@ public class MultiThreadedVideoPlayerModel implements VideoPlayerModel {
                 return; // stale: decoded before the latest seek
             }
 
-            processFrame(frame, new InfoFrame(decoded.frameNumber(), decoded.timestampUs()), decoded.generation());
+            // The subtitle (if any) for this frame's time travels with the frame in InfoFrame, so FrameSubtitler
+            // never touches the cache. It is looked up by the frame's own timestamp, which keeps it correct after seeks.
+            Subtitle subtitle = findSubtitleAt(decoded.timestampUs());
+
+            processFrame(frame, new InfoFrame(decoded.frameNumber(), decoded.timestampUs(), subtitle),
+                    decoded.generation());
 
             JavaFXFrameConverter frameConverter = converter; // read once; it's nulled on close
             if (frameConverter == null || decoded.generation() != seekGeneration.get()) {
@@ -1134,11 +1182,20 @@ public class MultiThreadedVideoPlayerModel implements VideoPlayerModel {
     private void processFrame(Frame frame, InfoFrame info, int generation) throws Exception {
         for (FrameProcessor processor : frameProcessors) {
             // Stop early if a seek or close made this frame stale
+            // if subtitle processor and subtitles are off then skip, this way
+            // we start the process even on queued frames.
+            if (processor instanceof FrameSubtitler && !subtitlesOn) {
+                continue;
+            }
             if (generation != seekGeneration.get()) {
                 return;
             }
             processor.process(frame, info);
         }
+    }
+    public boolean toggleSubtitles() {
+        subtitlesOn = !subtitlesOn;
+        return subtitlesOn;
     }
 
     private void initialiseFrameProcessors(InfoVideo videoInfo) throws Exception {

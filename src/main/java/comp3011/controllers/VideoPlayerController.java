@@ -38,7 +38,6 @@ public class VideoPlayerController {
     private final VideoPlayerView view;
     private final BiConsumer<Integer, Integer> videoSizeChangedHandler;
     // Only touched on the FX thread (button and key handlers).
-    private boolean subtitlesEnabled;
 
     public VideoPlayerController(
             boolean audioEnabled,
@@ -66,7 +65,8 @@ public class VideoPlayerController {
                     this::onStatusChanged,
                     this::onPlaybackStateChanged,
                     this::onAudioOutputStateChanged,
-                    processors);
+                    processors,
+                    subtitlesEnabled);
         }
 
         view.getStartOverButton().setOnAction(_ -> startOver());
@@ -77,7 +77,6 @@ public class VideoPlayerController {
         view.getAudioButton().setOnAction(_ -> toggleAudioOutput());
         view.showAudioEnabled(model.isAudioOutputEnabled());
 
-        this.subtitlesEnabled = subtitlesEnabled;
         view.getSubtitleButton().setOnAction(_ -> toggleSubtitles());
         view.showSubtitlesEnabled(subtitlesEnabled);
     }
@@ -143,8 +142,7 @@ public class VideoPlayerController {
     }
 
     private void toggleSubtitles() {
-        subtitlesEnabled = !subtitlesEnabled;
-        view.showSubtitlesEnabled(subtitlesEnabled);
+        view.showSubtitlesEnabled(model.toggleSubtitles()); // the model owns the flag and returns the new state
     }
 
     private void stopAndExit() {

@@ -10,6 +10,7 @@
  */
 package comp3011;
 
+import comp3011.assignment1.Assignment1Application;
 import comp3011.controllers.CommandLineController;
 import comp3011.controllers.VideoPlayerController;
 import comp3011.views.VideoPlayerView;
@@ -21,6 +22,8 @@ import javafx.geometry.Rectangle2D;
 import javafx.scene.Scene;
 import javafx.stage.Screen;
 import javafx.stage.Stage;
+import org.springframework.boot.builder.SpringApplicationBuilder;
+import org.springframework.context.ConfigurableApplicationContext;
 
 /**
  * Extents JavaFX's Application class and is the entry point for the video player.
@@ -37,6 +40,7 @@ import javafx.stage.Stage;
 public class VideoPlayerApp extends Application {
     private static CommandLineController commandLineController;
 
+    private ConfigurableApplicationContext subtitleServer; // null if the server did not start
     private VideoPlayerController controller;
     private Stage stage;
     private Rectangle2D selectedScreenBounds;
@@ -137,10 +141,25 @@ public class VideoPlayerApp extends Application {
         stage.setY(selectedScreenBounds.getMinY() - stage.getScene().getY());
     }
 
+    // Runs before start(), on the launcher thread. Starts the subtitle web server inside this process; the player still
+    // talks to it over HTTP on localhost:8080. headless(false) because this process also runs a JavaFX window.
+    @Override
+    public void init() {
+        try {
+            subtitleServer = new SpringApplicationBuilder(Assignment1Application.class).headless(false).run();
+        } catch (Exception e) {
+            // e.g. port 8080 already used by a separately started server, or no API key. The player must still open.
+            System.err.println("Subtitle server did not start (" + e.getMessage() + "). Playing without it.");
+        }
+    }
+
     @Override
     public void stop() {
         if (controller != null) {
             controller.shutdown();
+        }
+        if (subtitleServer != null) {
+            subtitleServer.close();
         }
     }
 

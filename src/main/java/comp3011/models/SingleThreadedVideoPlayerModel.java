@@ -132,6 +132,10 @@ public class SingleThreadedVideoPlayerModel implements VideoPlayerModel {
         seekTo(0);
     }
 
+    public boolean toggleSubtitles() {
+        return false;
+    }
+
     public void backFiveSeconds() {
         seekRelative(-FIVE_SECONDS_US);
     }
