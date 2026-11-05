@@ -177,7 +177,7 @@ class PlaybackLoadIT {
                     ? new SingleThreadedVideoPlayerModel(false, videoSizeChanged, view::setImage, statusChanged,
                             (playing, paused) -> { }, audioOn -> { }, processors)
                     : new MultiThreadedVideoPlayerModel(false, videoSizeChanged, view::setImage, statusChanged,
-                            (playing, paused) -> { }, audioOn -> { }, processors);
+                            (playing, paused) -> { }, audioOn -> { }, processors, false); // false: subtitles off
             model.setFrameTimingListener(timings);
             stage.show();
             model.play(clip);

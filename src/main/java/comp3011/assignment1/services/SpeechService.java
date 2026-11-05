@@ -31,6 +31,7 @@ public class SpeechService {
     private static final double AVG_LOG_PROB_LIMIT = -1.0;
     private static final double MIN_SEG_DURATION = 1;
     private static final double MAX_SEG_DURATION = 7;
+    private static final double TOLERANCE = 0.0009;
     private final OpenAIClient gpt;
     private final Clock clock;
     private final String startUTC;
@@ -42,8 +43,11 @@ public class SpeechService {
     // double accumulator; many request threads can add to it at once without locking.
     private final DoubleAdder subtitleUsage = new DoubleAdder();
 
-    SpeechService(OpenAIClient gptC) {
+    private final SubtitleCache subtitleCache;
+
+    SpeechService(OpenAIClient gptC, SubtitleCache subtitleCache) {
         gpt = gptC;
+        this.subtitleCache = subtitleCache;
         clock = Clock.systemUTC();
         startUTC = clock.instant().toString();
         startMillis = clock.millis();
@@ -101,7 +105,29 @@ public class SpeechService {
         return new ResponseEntity<ShutdownResponse>(new ShutdownResponse(message), HttpStatus.ACCEPTED);
     }
 
-    public SubtitleResponse subtitleHelper(byte[] audioBytes) throws IOException {
+    // The media key comes from the player's file fingerprint ("<size>-<sha256 hex>-<chunk seconds>"), so only digits,
+    // lowercase hex and dashes are accepted. Anything else is treated as "no key" and just skips the cache.
+    private static final java.util.regex.Pattern MEDIA_KEY = java.util.regex.Pattern.compile("[0-9a-f-]{1,200}");
+
+    // mediaKey and chunkIndex say which part of which video this audio is. When both are given and the answer is already
+    // cached, it is returned without calling OpenAI (so it also works with no internet). Either one missing means
+    // "don't use the cache", exactly as before the cache existed.
+    public SubtitleResponse subtitleHelper(byte[] audioBytes, String mediaKey, Long chunkIndex) throws IOException {
+        boolean cacheable = chunkIndex != null && mediaKey != null && MEDIA_KEY.matcher(mediaKey).matches();
+        if (cacheable) {
+            var cached = subtitleCache.get(mediaKey, chunkIndex);
+            if (cached.isPresent()) {
+                return cached.get();
+            }
+        }
+        SubtitleResponse fresh = transcribeSubtitles(audioBytes);
+        if (cacheable) {
+            subtitleCache.put(mediaKey, chunkIndex, fresh); // only reached when OpenAI answered; errors throw above
+        }
+        return fresh;
+    }
+
+    private SubtitleResponse transcribeSubtitles(byte[] audioBytes) throws IOException {
         Path copy = null;
         try {
             Path path = Files.createTempFile("audioFile", ".wav");
@@ -186,11 +212,10 @@ public class SpeechService {
             for (String w : parts) {
                 if (wordIndex >= words.size()) break; // incorrect index
                 double wEnd = words.get(wordIndex).end(); double wStart = words.get(wordIndex).start();
-                if (!inRange(wStart, wEnd, segStart, segEnd)) {
+                if (!inRange(wStart, wEnd, segStart - TOLERANCE, segEnd + TOLERANCE)) {
                     break; // next segment's words, caused by unequal length arrays
                 }
                 wordIndex++; // always process the current word.
-                System.out.println("LastSegStart: " + lastSegStart + " before word: " + w);
                 // word limit exceeded or word end doesn't fit the last segment duration, END PREV SEGMENT
                 if (currText.toString().strip().length() + w.length() >= 84 || !inRange(wStart, wEnd, lastSegStart, lastSegStart + MAX_SEG_DURATION)) {
                     // end before this word

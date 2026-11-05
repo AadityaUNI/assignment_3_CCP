@@ -1,5 +1,14 @@
 package comp3011.assignment1.exception;
 
+import com.openai.errors.BadRequestException;
+import com.openai.errors.InternalServerException;
+import com.openai.errors.OpenAIInvalidDataException;
+import com.openai.errors.OpenAIIoException;
+import com.openai.errors.OpenAIRetryableException;
+import com.openai.errors.PermissionDeniedException;
+import com.openai.errors.RateLimitException;
+import com.openai.errors.UnauthorizedException;
+import com.openai.errors.UnprocessableEntityException;
 import comp3011.assignment1.models.ErrorResponse;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.http.HttpStatus;
@@ -22,6 +31,42 @@ public class ExceptionController {
                 ex.getMessage(),
                 "/api/v1/admin/shutdown"
         );
+    }
+
+    // ---- Failures when calling OpenAI (used by /api/v1/subtitles) ----
+    // The player only needs to tell "try again later" (503) from "retrying won't help" (502/422). Messages stay generic
+    // on purpose: the upstream error text can mention the account or key, so it is never sent to the client.
+
+    // No connection, DNS failure or timeout (i.e. no internet), a busy OpenAI (429) or an OpenAI outage (5xx).
+    // All temporary, so 503: the player should back off and retry.
+    @ResponseStatus(HttpStatus.SERVICE_UNAVAILABLE)
+    @ExceptionHandler(value = {OpenAIIoException.class, OpenAIRetryableException.class,
+            RateLimitException.class, InternalServerException.class},
+            produces = MediaType.APPLICATION_JSON_VALUE)
+    public ErrorResponse handleUpstreamUnavailable(Exception ex, HttpServletRequest httpServlet) {
+        return error(HttpStatus.SERVICE_UNAVAILABLE, "Speech service is temporarily unavailable.", httpServlet);
+    }
+
+    // Our key was rejected or the reply was unreadable. Retrying won't fix it, so 502 (bad gateway) rather than 503.
+    @ResponseStatus(HttpStatus.BAD_GATEWAY)
+    @ExceptionHandler(value = {UnauthorizedException.class, PermissionDeniedException.class,
+            OpenAIInvalidDataException.class},
+            produces = MediaType.APPLICATION_JSON_VALUE)
+    public ErrorResponse handleUpstreamRejected(Exception ex, HttpServletRequest httpServlet) {
+        return error(HttpStatus.BAD_GATEWAY, "Speech service could not process the request.", httpServlet);
+    }
+
+    // OpenAI refused this audio (bad format, too short, unprocessable). The same bytes will fail again: 422.
+    @ResponseStatus(HttpStatus.UNPROCESSABLE_ENTITY)
+    @ExceptionHandler(value = {BadRequestException.class, UnprocessableEntityException.class},
+            produces = MediaType.APPLICATION_JSON_VALUE)
+    public ErrorResponse handleAudioRejected(Exception ex, HttpServletRequest httpServlet) {
+        return error(HttpStatus.UNPROCESSABLE_ENTITY, "The audio could not be transcribed.", httpServlet);
+    }
+
+    private ErrorResponse error(HttpStatus status, String message, HttpServletRequest httpServlet) {
+        return new ErrorResponse(Instant.now().toString(), status.value(), status.getReasonPhrase(), message,
+                httpServlet.getRequestURI());
     }
 
     @ResponseStatus(HttpStatus.INTERNAL_SERVER_ERROR)

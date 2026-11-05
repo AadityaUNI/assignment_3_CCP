@@ -21,8 +21,12 @@ public class SpeechController {
     }
 
     @PostMapping(value = "/api/v1/subtitles", consumes = "audio/wav")
-    SubtitleResponse getSubtitles(@RequestBody byte[] audioBytes) throws IOException {
-        return service.subtitleHelper(audioBytes);
+    SubtitleResponse getSubtitles(
+            @RequestBody byte[] audioBytes,
+            // Optional: which video and which chunk of it this audio is, so the server can cache the answer.
+            @RequestHeader(value = "X-Media-Key", required = false) String mediaKey,
+            @RequestHeader(value = "X-Chunk-Index", required = false) Long chunkIndex) throws IOException {
+        return service.subtitleHelper(audioBytes, mediaKey, chunkIndex);
     }
 
     @GetMapping("/api/v1/admin/uptime")

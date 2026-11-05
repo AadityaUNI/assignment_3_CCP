@@ -214,7 +214,7 @@ public class MultiThreadedVideoPlayerModel implements VideoPlayerModel {
             Comparator.comparingInt(SequencedFrame::generation).thenComparingInt(SequencedFrame::index));
 
     // Subtitle Worker Settings
-    private final long segmentLength = 30_000_000L; // microseconds (30 s)
+    private final long segmentLength = 20_000_000L; // microseconds (20 s)
     private static final double MIN_SUBTITLE_SECONDS = 1.0; // the brief asks for subtitles to stay up at least 1 s
     private final int subThreads = 3;
     private final ConcurrentHashMap<Long, Subtitle[]> subtitleCache = new ConcurrentHashMap<>();
@@ -231,6 +231,8 @@ public class MultiThreadedVideoPlayerModel implements VideoPlayerModel {
     private static final int SUBTITLE_AUDIO_SAMPLE_RATE = 16_000;
     private static final long AUDIO_IDLE_SLEEP_MS = 200; // how often the audio decoder rechecks when nothing is ahead
     private static final long SUBTITLE_IDLE_SLEEP_MS = 200; // same for subtitle workers waiting for a chunk or its audio
+    private static final long SUBTITLE_RETRY_MIN_MS = 1_000; // first wait after a failed request
+    private static final long SUBTITLE_RETRY_MAX_MS = 5_000; // the wait doubles after each failure up to this
     private final ConcurrentHashMap<Long, byte[]> audioChunks = new ConcurrentHashMap<>();
     // Chunk indexes whose audio hasn't been decoded yet. Same grid as pendingChunks.
     private final ConcurrentSkipListSet<Long> pendingAudioChunks = new ConcurrentSkipListSet<>();
@@ -244,6 +246,10 @@ public class MultiThreadedVideoPlayerModel implements VideoPlayerModel {
     // workers keep taking the next uncaptioned segment in the file,
     // pass it into the subtitles api, store result in the cache with each segment floored.
     public volatile boolean subtitlesOn;
+
+    // Names this video's contents for the server's subtitle cache (see MediaFingerprint). null = still being worked out,
+    // "" = could not be worked out (send requests without a key). Written by one thread, read by the subtitle workers.
+    private volatile String mediaKey;
 
     public MultiThreadedVideoPlayerModel(
             boolean audioEnabled,
@@ -260,7 +266,14 @@ public class MultiThreadedVideoPlayerModel implements VideoPlayerModel {
         this.statusChangedHandler = statusChangedHandler;
         this.playbackStateChangedHandler = playbackStateChangedHandler;
         this.audioOutputStateChangedHandler = audioOutputStateChangedHandler;
-        this.frameProcessors = processors;
+        // The subtitle toggle can only show or hide a FrameSubtitler that is in the chain. Without -S none was created,
+        // so add one at the end (drawn on top of every other effect) and leave it dormant until subtitlesOn is true.
+        // Copy the list so the caller's list isn't changed.
+        List<FrameProcessor> chain = new ArrayList<>(processors);
+        if (chain.stream().noneMatch(processor -> processor instanceof FrameSubtitler)) {
+            chain.add(new FrameSubtitler());
+        }
+        this.frameProcessors = chain;
         this.subtitlesOn = subtitlesOn;
     }
 
@@ -268,7 +281,27 @@ public class MultiThreadedVideoPlayerModel implements VideoPlayerModel {
         videoFile = file;
         videoDurationUs = NO_SEEK_REQUEST;
         videoFrameDurationUs = 0;
+        startMediaKeyThread(file);
         startPlayback(0, false, NO_SEEK_REQUEST);
+    }
+
+    // Fingerprinting reads up to 3 MB from disk (slow on a USB drive), so it runs on its own thread and never delays
+    // the FX thread. Until it finishes mediaKey is null and the subtitle workers wait.
+    private void startMediaKeyThread(File file) {
+        mediaKey = null;
+        Thread thread = new Thread(() -> {
+            String key;
+            try {
+                key = MediaFingerprint.compute(file);
+            } catch (Exception e) {
+                key = ""; // e.g. the file disappeared: subtitles still work, they just aren't cached
+            }
+            if (videoFile == file) { // ignore the answer if another file was opened meanwhile
+                mediaKey = key;
+            }
+        }, "media-fingerprint");
+        thread.setDaemon(true);
+        thread.start();
     }
 
     public void startOver() {
@@ -517,17 +550,30 @@ public class MultiThreadedVideoPlayerModel implements VideoPlayerModel {
     // Runs until stopSubtitleThreads() interrupts it. It does not stop when pendingChunks is empty, because a chunk
     // that fails to send is put back there later and some worker must still be around to retry it.
     private void subtitleLoop() {
+        long retryDelayMs = SUBTITLE_RETRY_MIN_MS; // this worker's own backoff; reset to the minimum after a success
         try {
             while (!Thread.currentThread().isInterrupted()) {
                 // take the next one
                 long currentChunk = currentTimestampUs / segmentLength;
                 Long next = pendingChunks.ceiling(currentChunk);
                 // we can process a chunk if its audio is decoded, and only the worker whose remove() wins may do it
-                if (next != null && audioChunks.containsKey(next) && pendingChunks.remove(next)) {
+                // (mediaKey == null means the fingerprint isn't ready yet, so wait: sending now would skip the cache)
+                if (mediaKey != null && next != null && audioChunks.containsKey(next) && pendingChunks.remove(next)) {
+                    boolean succeeded = false;
                     try {
-                        processChunk(next);
+                        succeeded = processChunk(next);
                     } catch (Exception e) {
                         System.out.println(e.toString());
+                    }
+                    if (succeeded) {
+                        retryDelayMs = SUBTITLE_RETRY_MIN_MS;
+                    } else {
+                        // Server down or no internet: processChunk already put the chunk back. Wait before trying
+                        // again (1 s, 2 s, 4 s, then 5 s at most) so we don't hammer a service that is failing.
+                        // Short cap on purpose: a retry is one cheap local request, and a long cap would delay
+                        // subtitles by that long after the connection returns.
+                        Thread.sleep(retryDelayMs);
+                        retryDelayMs = Math.min(retryDelayMs * 2, SUBTITLE_RETRY_MAX_MS);
                     }
                 } else {
                     Thread.sleep(SUBTITLE_IDLE_SLEEP_MS); // nothing ready yet: wait instead of spinning
@@ -540,15 +586,23 @@ public class MultiThreadedVideoPlayerModel implements VideoPlayerModel {
 
     // calls for processing this chunk through our api
     // gets the audio chunk from the other grabber working alongside
-    private void processChunk(Long next) {
+    // Returns true if the subtitles were cached; false if the chunk was put back in pendingChunks to retry.
+    private boolean processChunk(Long next) {
         // next is the starting of the segment
         byte[] segment = audioChunks.get(next);
         byte[] wavBytes = convertWav(segment);
-        HttpRequest request = HttpRequest.newBuilder(subtitleURI)
+        HttpRequest.Builder builder = HttpRequest.newBuilder(subtitleURI)
                 .timeout(Duration.ofSeconds(60))
                 .header("Content-Type", "audio/wav")
-                .POST(HttpRequest.BodyPublishers.ofByteArray(wavBytes))
-                .build();
+                .POST(HttpRequest.BodyPublishers.ofByteArray(wavBytes));
+        // Tell the server which video and chunk this is so it can answer from its cache. The chunk length is part of
+        // the key because chunk 3 means different audio if the length is ever changed.
+        String key = mediaKey;
+        if (key != null && !key.isEmpty()) {
+            builder.header("X-Media-Key", key + "-" + segmentLength / 1_000_000L);
+            builder.header("X-Chunk-Index", Long.toString(next));
+        }
+        HttpRequest request = builder.build();
 
         try {
             HttpResponse<String> response = HTTP.send(request, HttpResponse.BodyHandlers.ofString());
@@ -556,9 +610,12 @@ public class MultiThreadedVideoPlayerModel implements VideoPlayerModel {
                 // Jackson fills the record straight from {"subs":[{"text":..,"start":..,"end":..}]}.
                 // A malformed body throws (unchecked) and lands in the catch below, so the chunk is retried.
                 Subtitle[] parsed = JSON.readValue(response.body(), SubtitleResponse.class).subs();
-
                 // The server timed the audio from 0 because we sent it just this chunk, but the player's clock
                 // is in whole-file time, so shift each subtitle by where this chunk starts (seconds).
+                // Example: chunk 2 with 20 s chunks starts at 40 s, so a subtitle at 3.5 s..6.0 s in the reply
+                // is stored as 43.5 s..46.0 s. This matches decodeAudioChunk(), which began the audio at exactly
+                // chunk * segmentLength (it can be off by less than one audio frame, which is not visible).
+                // The shift is done once here, before caching, so findSubtitleAt() never has to think about it.
                 double chunkStartSec = next * segmentLength / 1_000_000.0;
                 Subtitle[] shifted = new Subtitle[parsed.length];
                 for (int i = 0; i < parsed.length; i++) {
@@ -567,15 +624,19 @@ public class MultiThreadedVideoPlayerModel implements VideoPlayerModel {
                 }
                 subtitleCache.put(next, shifted);
                 audioChunks.remove(next); // subtitles are cached, so the raw audio (about 1 MB per chunk) isn't needed
-            } else {
-                pendingChunks.add(next);
+                return true;
             }
+            // Any non-200 (503 no internet, 502 key problem, 422 bad audio, ...) is retried later with a backoff.
+            pendingChunks.add(next);
+            return false;
         } catch (InterruptedException e) {
             // send() clears the interrupt flag when it throws this, so set it again or subtitleLoop would never stop
             pendingChunks.add(next);
             Thread.currentThread().interrupt();
+            return false;
         } catch (Exception e) {
-            pendingChunks.add(next);
+            pendingChunks.add(next); // server not running, timeout, or an unreadable reply
+            return false;
         }
     }
 

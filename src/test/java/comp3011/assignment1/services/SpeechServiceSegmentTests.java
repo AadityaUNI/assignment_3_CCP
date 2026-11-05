@@ -15,7 +15,7 @@ import static org.mockito.Mockito.mock;
 class SpeechServiceSegmentTests {
 
     // The client is never used by processSegments, so a mock is enough to build the service.
-    private final SpeechService service = new SpeechService(mock(OpenAIClient.class));
+    private final SpeechService service = new SpeechService(mock(OpenAIClient.class), mock(SubtitleCache.class));
 
     private static TranscriptionSegment seg(String text, double start, double end, double noSpeech, double logProb) {
         return TranscriptionSegment.builder()

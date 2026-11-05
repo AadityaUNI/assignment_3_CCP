@@ -68,3 +68,6 @@ rubric.md
 
 ### VS Code ###
 .vscode/
+
+### Subtitle cache (server writes this on close) ###
+cache/
