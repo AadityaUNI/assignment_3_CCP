@@ -1,3 +1,6 @@
+/*
+ * Author: Aaditya Singh, A1946894
+ */
 package comp3011.assignment1.services;
 
 import com.openai.models.audio.transcriptions.*;
@@ -31,7 +34,7 @@ public class SpeechService {
     private static final double AVG_LOG_PROB_LIMIT = -1.0;
     private static final double MIN_SEG_DURATION = 1;
     private static final double MAX_SEG_DURATION = 7;
-    private static final double TOLERANCE = 0.0009;
+    private static final double TOLERANCE = 0.5;
     private final OpenAIClient gpt;
     private final Clock clock;
     private final String startUTC;
@@ -39,8 +42,7 @@ public class SpeechService {
     private AtomicLong totalInput = new AtomicLong(0);
     private AtomicLong totalOutput = new AtomicLong(0);
     AtomicBoolean requestingShutdown = new AtomicBoolean(false);
-    // Total Whisper audio seconds billed so far. DoubleAdder is the JDK's thread-safe
-    // double accumulator; many request threads can add to it at once without locking.
+    // Total Whisper seconds billed; DoubleAdder lets many request threads add without locking.
     private final DoubleAdder subtitleUsage = new DoubleAdder();
 
     private final SubtitleCache subtitleCache;
@@ -93,8 +95,7 @@ public class SpeechService {
     }
 
     public ResponseEntity<ShutdownResponse> shutdownHelper() {
-        // returns true if value was changed, meaning we need to skip this for the true (first one)
-        // and run for the rest
+        // only the first caller flips the flag; everyone after gets the conflict
         if (!requestingShutdown.compareAndSet(false, true)) {
             throw new MultipleShutdownException();
         }
@@ -105,14 +106,12 @@ public class SpeechService {
         return new ResponseEntity<ShutdownResponse>(new ShutdownResponse(message), HttpStatus.ACCEPTED);
     }
 
-    // The media key comes from the player's file fingerprint ("<size>-<sha256 hex>-<chunk seconds>"), so only digits,
-    // lowercase hex and dashes are accepted. Anything else is treated as "no key" and just skips the cache.
+    // Keys look like "<size>-<sha256>-<chunk seconds>"; anything else just skips the cache.
     private static final java.util.regex.Pattern MEDIA_KEY = java.util.regex.Pattern.compile("[0-9a-f-]{1,200}");
 
-    // mediaKey and chunkIndex say which part of which video this audio is. When both are given and the answer is already
-    // cached, it is returned without calling OpenAI (so it also works with no internet). Either one missing means
-    // "don't use the cache", exactly as before the cache existed.
+    // With a media key and chunk index, a cached answer skips OpenAI (works offline); without them, no caching.
     public SubtitleResponse subtitleHelper(byte[] audioBytes, String mediaKey, Long chunkIndex) throws IOException {
+        subtitleCache.saveIfDue();
         boolean cacheable = chunkIndex != null && mediaKey != null && MEDIA_KEY.matcher(mediaKey).matches();
         if (cacheable) {
             var cached = subtitleCache.get(mediaKey, chunkIndex);
@@ -133,9 +132,7 @@ public class SpeechService {
             Path path = Files.createTempFile("audioFile", ".wav");
             copy = path;
             Files.write(path, audioBytes);
-            // Sent to https://api.openai.com/v1/audio/transcriptions. verbose_json is the only format that returns
-            // timings; asking for both granularities gives per-segment timings and confidence values, plus per-word
-            // timings. added parameter syntax with AI
+            // verbose_json is the only format with timings; we want both segment and word ones (param syntax via AI)
             TranscriptionCreateParams createParams = TranscriptionCreateParams.builder()
                     .file(path)
                     .model(AudioModel.WHISPER_1)
@@ -165,8 +162,7 @@ public class SpeechService {
                 Files.deleteIfExists(copy);
             }
         }
-        // Whisper found no segments/words (e.g. a silent chunk): an empty list tells the player "nothing to show here"
-        // so it caches that and moves on, instead of getting an empty body and retrying forever.
+        // nothing said (e.g. silent chunk): empty list, so the player caches it instead of retrying forever
         return new SubtitleResponse(new Subtitle[0]);
     }
 
@@ -175,35 +171,29 @@ public class SpeechService {
             return; // nothing buffered, so no empty subtitle
         }
         processed.add(new Subtitle(currText.toString(), start, end));
-        // Clear in place: assigning a new StringBuilder here would only change this method's local copy
-        // of the reference, and the caller would keep the old text and add it to the next subtitle too.
+        // clear in place: a new StringBuilder here wouldn't reach the caller's reference
         currText.setLength(0);
     }
 
     Subtitle[] processSegments(List<TranscriptionSegment> segments, List<TranscriptionWord> words) {
-        // create arrays of subtitles, each having a start and end index and text,
-        // init last start = 0, start by getting each segment, if segment threshold falls below silent, ignore this segment and all words in it
-        // we build our own segments as follows:
-        // keep a string curr text, start timestamp (last start)
-        // segments appear as we add to the processed, so each segment's word's start is the same as the segment start
-        // break on word if it ends with punctuation, and we have word count >= 4 but the end should be atleast one second after this word end
-        // breaking: reset timestamp to the end of this word (looked through with word array)
-        // break BEFORE word if char size after word is >= 84
+        // rebuild subtitles word by word: break after punctuation (3+ words, 1 s+), before 84 chars or past 7 s
         double lastSegStart = -1;
         double lastWordEnd = -1;
         int wordIndex = 0;
         int wordCount = 0; // words in the buffered subtitle; carries across segments like currText does
         StringBuilder currText = new StringBuilder();
         List<Subtitle> processed = new ArrayList<>();
+        boolean brokenSegment = false;
 
-        for (TranscriptionSegment seg : segments) {
+        for (int segIndex = 0; segIndex < segments.size(); segIndex++) {
+            TranscriptionSegment seg = segments.get(segIndex);
+            // null on the last segment: there is no next segment a word could be left for
+            TranscriptionSegment nextSegment = segIndex + 1 < segments.size() ? segments.get(segIndex + 1) : null;
             double segStart = seg.start(); double segEnd = seg.end();
             // process this duration
             String[] parts = seg.text().trim().split("\\s+");
 
-            // Whisper is unsure there is speech here (and unsure of what it heard): drop the whole segment.
-            // The words[] array is flat across all segments, so we must still step wordIndex past this
-            // segment's words or every later segment would read the wrong word timings.
+            // probably not speech: drop it, but still skip its words since words[] is shared by all segments
             if (seg.noSpeechProb() > NO_SPEECH_PROB_LIMIT && seg.avgLogprob() < AVG_LOG_PROB_LIMIT) {
                 wordIndex += parts.length;
                 continue;
@@ -213,7 +203,10 @@ public class SpeechService {
                 if (wordIndex >= words.size()) break; // incorrect index
                 double wEnd = words.get(wordIndex).end(); double wStart = words.get(wordIndex).start();
                 if (!inRange(wStart, wEnd, segStart - TOLERANCE, segEnd + TOLERANCE)) {
-                    break; // next segment's words, caused by unequal length arrays
+                    // if the next segment can't include this word, include it here, otherwise leave
+                    if (!notInNextSegment(wStart, wEnd, nextSegment)) {
+                        break;
+                    }
                 }
                 wordIndex++; // always process the current word.
                 // word limit exceeded or word end doesn't fit the last segment duration, END PREV SEGMENT
@@ -247,5 +240,13 @@ public class SpeechService {
     }
     boolean inRange(double ws, double we, double a, double b) {
         return ws >= a && we <= b;
+    }
+
+    // true if the next segment can't take this word, so it stays here (or a stray word would block the rest)
+    boolean notInNextSegment(double wStart, double wEnd, TranscriptionSegment nextSegment) {
+        if (nextSegment == null) {
+            return true; // last segment: nowhere else for the word to go
+        }
+        return !inRange(wStart, wEnd, nextSegment.start() - TOLERANCE, nextSegment.end() + TOLERANCE);
     }
 }

@@ -14,15 +14,7 @@ import java.nio.ByteBuffer;
 
 import org.bytedeco.javacv.Frame;
 
-/**
- * Converts colour frames to greyscale.
- *
- * <p>
- * {@link #process(Frame, InfoFrame)} calculates each pixel's luminance from
- * its BGR channels and writes that value back to every colour channel through
- * {@link #convertFrame(ByteBuffer)}.
- * </p>
- */
+/** Converts frames to greyscale by writing each pixel's luminance to all three channels. */
 public class FrameBlackAndWhiter extends FrameProcessor {
 
     public FrameBlackAndWhiter() {

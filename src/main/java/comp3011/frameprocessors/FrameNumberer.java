@@ -14,18 +14,7 @@ import java.nio.ByteBuffer;
 
 import org.bytedeco.javacv.Frame;
 
-/**
- * Draws the current video-frame number in the bottom-right corner of each frame,
- * using tiny 'seven segment display'-like rendering. This lets us read frame number
- * off screen captures so the correctness of other effects can be compared to a
- * reference implementation display the exact same frame number.
- *
- * <p>
- * {@link #process(Frame, InfoFrame)} converts the number to digits, and
- * {@link #drawDigit(ByteBuffer, int, int, int)} renders each digit using a small
- * seven-segment-style pixel glyph.
- * </p>
- */
+/** Draws the frame number bottom-right in seven-segment digits, handy for comparing screenshots. */
 public class FrameNumberer extends FrameProcessor {
     private static final int TILE_WIDTH = 5;
     private static final int TILE_HEIGHT = 7;

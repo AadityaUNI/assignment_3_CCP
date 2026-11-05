@@ -20,18 +20,7 @@ import javax.sound.sampled.SourceDataLine;
 
 import org.bytedeco.javacv.Frame;
 
-/**
- * Streams decoded audio from JavaCV frames to the Java Sound output device, in support of the video player being able
- * to play the sound track as well. This is a good test of a player because sound continuity (or lack thereof) is easy
- * for the ear to pick up on if/when playback gets laggy.
- *
- * <p>
- * Converts supported packed or planar 16-bit sample buffers to the
- * interleaved, little-endian PCM format required by {@link SourceDataLine}.
- * {@link VideoPlayerModel} singleton schedules when the resulting audio is
- * written and owns the AudioPlayer.
- * </p>
- */
+/** Plays decoded audio through Java Sound, converting 16-bit samples to interleaved little-endian PCM. */
 public class AudioPlayer implements AutoCloseable {
     private static final long WRITE_TRACE_THRESHOLD_NS = 2_000_000L;
     private static final int AUDIO_WARMUP_BYTES = 4096;
@@ -71,10 +60,7 @@ public class AudioPlayer implements AutoCloseable {
             return 0;
         }
 
-        // Try and avoid blocking writes to the audio stream by only adding equal or less than the number of bytes
-        // available. We return only the bytes we were able to write without overflowing the buffer, so the remaining
-        // bytes can be tracked and written later. This avoids audio buffer blocking in a cooperative multitasking
-        // architecture - i.e. we are being cooperative and not stalling the thread on line.write below!
+        // only write what fits so line.write never blocks; the caller keeps the rest for later
         int availableBeforeWrite = line.available();
         int byteCount = Math.min(length, availableBeforeWrite);
         if (byteCount <= 0) {
@@ -111,19 +97,14 @@ public class AudioPlayer implements AutoCloseable {
         }
     }
 
-    // Why do we have this? Some (many) audio output systems have a long 'wake up' delay before they output the first
-    // audio. This is not great for real time playback of audio that is synched with video frames. It can lead to a
-    // noticeable lag between the vision and the audio. This method writes a bunch of silence into the audio system
-    // then flushes it out as soon as it is written to get any wake up lag out of the way, so that it is hopefully ready
-    // for real time output when the real audio bytes start showing up.
+    // Plays and flushes some silence so the sound card's wake-up delay is over before real audio arrives.
     private void warmUpLine() {
         byte[] silence = new byte[Math.min(AUDIO_WARMUP_BYTES, line.getBufferSize())]; // All zeros.
         line.write(silence, 0, silence.length); // May play, but harmless.
         line.flush(); // Get rid of the rest straight away, hopefully warm up is done.
     }
 
-    // This is a little tedious but handles channel interleaved stereo audio (normal) and also 'packed' audio where
-    // there is a chunk of left speaker followed by a chunk of right speaker (unusual, and needs conversion).
+    // Handles interleaved audio (normal) and planar audio (one buffer per channel, needs interleaving).
     private int copySamplesToOutputBuffer(Frame frame) {
         Buffer[] samples = frame.samples;
         int channels = frame.audioChannels;

@@ -16,6 +16,7 @@ import comp3011.controllers.VideoPlayerController;
 import comp3011.views.VideoPlayerView;
 
 import java.util.List;
+import java.util.Map;
 
 import javafx.application.Application;
 import javafx.geometry.Rectangle2D;
@@ -25,18 +26,7 @@ import javafx.stage.Stage;
 import org.springframework.boot.builder.SpringApplicationBuilder;
 import org.springframework.context.ConfigurableApplicationContext;
 
-/**
- * Extents JavaFX's Application class and is the entry point for the video player.
- * Provided required JavaFX methods start and stop and also basic on-screen window
- * management functions. Owns the {@link VideoPlayerController}, which in turn owns
- * the {@link VideoPlayerView} and {@link VideoPlayerController}.
- *
- * <p>
- * Creates the JavaFX Stage and Scene, the VideoPlayerController, and applies
- * command-line launch settings, and starts playback. It also resizes the video
- * display to fit the selected screen.
- * </p>
- */
+/** JavaFX entry point: builds the window and controller, applies the command line and starts playback. */
 public class VideoPlayerApp extends Application {
     private static CommandLineController commandLineController;
 
@@ -141,12 +131,17 @@ public class VideoPlayerApp extends Application {
         stage.setY(selectedScreenBounds.getMinY() - stage.getScene().getY());
     }
 
-    // Runs before start(), on the launcher thread. Starts the subtitle web server inside this process; the player still
-    // talks to it over HTTP on localhost:8080. headless(false) because this process also runs a JavaFX window.
+    // Starts the subtitle server in-process (still reached over HTTP); headless(false) since we also show a window.
     @Override
     public void init() {
         try {
-            subtitleServer = new SpringApplicationBuilder(Assignment1Application.class).headless(false).run();
+            SpringApplicationBuilder server = new SpringApplicationBuilder(Assignment1Application.class).headless(false);
+            String keyFile = commandLineController.getKeyFile();
+            if (keyFile != null) {
+                // Only the file's path is passed on; OpenAIConfig reads the key itself, so it never sits in a property.
+                server.properties(Map.of("openai.key-file", keyFile));
+            }
+            subtitleServer = server.run();
         } catch (Exception e) {
             // e.g. port 8080 already used by a separately started server, or no API key. The player must still open.
             System.err.println("Subtitle server did not start (" + e.getMessage() + "). Playing without it.");

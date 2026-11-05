@@ -16,13 +16,7 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.HexFormat;
 
-/**
- * <p>
- * Hashing a whole video from a USB drive would be slow, so this hashes the file size plus three 1 MB samples: the
- * start, the middle and the end. A file of 3 MB or less is hashed in full. Two different files would only share a
- * name if they have the same size and identical bytes in all three places.
- * </p>
- */
+/** Quick content key: hashes the size plus 1 MB from the start, middle and end (small files in full). */
 public final class MediaFingerprint {
     static final int SAMPLE_BYTES = 1024 * 1024;
 

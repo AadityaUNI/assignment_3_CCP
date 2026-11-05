@@ -15,13 +15,7 @@ import java.util.Random;
 
 import org.bytedeco.javacv.Frame;
 
-/**
- * Adds dark dust and hair-like marks to simulate damaged film.
- *
- * <p>{@link #process(Frame, InfoFrame)} uses a deterministic, media-specific
- * random sequence and a Poisson-distributed mark count. {@link #drawRandomDustMark(ByteBuffer, Random)}
- * draws each curved mark as a series of softly darkened points.</p>
- */
+/** Adds deterministic dust and hair marks, a Poisson-distributed number per frame. */
 public class FrameDuster extends FrameProcessor {
     private static final double DUST_MARKS_PER_SECOND = 20.0;
     private static final double MIN_DUST_LENGTH_PERCENTAGE = 1.0;

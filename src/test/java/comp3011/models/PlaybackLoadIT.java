@@ -37,25 +37,10 @@ import javafx.scene.Scene;
 import javafx.stage.Screen;
 import javafx.stage.Stage;
 
-/**
- * Plays {@code loadtest.mp4} (the first minute of the assignment's movie.mp4, committed because the full video
- * is over GitHub's 100MB limit) on both players under 6 and 12 stacked effects, in a real window, and counts on
- * every frame shown:
- * <ul>
- * <li><b>late frames</b>: shown more than one frame duration (41.7ms at 24fps) after it was due. Up to one JavaFX
- * pulse (~16.7ms) of lateness is normal, since frames can only go on screen at a pulse.</li>
- * <li><b>negative headroom</b>: the frame's effects finished after it was due (the red value in the console trace).</li>
- * </ul>
- * Fails if the multi-threaded player does worse than the single-threaded one on either count.
- *
- * <p>
- * Run with {@code mvn verify}. Needs a display (a real window is opened) and {@code loadtest.mp4} in the project root,
- * or another video passed with {@code -Dloadtest.video=path}. Takes about 4-5 minutes (4 one-minute runs).
- * </p>
- */
+// mvn verify: plays loadtest.mp4 on both models at 6 and 12 effects; fails if multi has more late frames
+// (shown over one frame late) or negative-headroom frames than single. Needs a display, takes ~5 min.
 class PlaybackLoadIT {
-    // Each load level uses the first N letters, so each level adds effects on top of the previous one.
-    // 11 distinct effects exist, so the 12th repeats pepper.
+    // each level takes the first N letters; only 11 distinct, so the 12th repeats pepper
     private static final String EFFECT_CHAIN = "sfwyvdjmbpnp";
     private static final long CLIP_SECONDS = 60;
     // A player that can't keep up plays slower than real time, so cap how long one run may take.
@@ -71,8 +56,7 @@ class PlaybackLoadIT {
     private static int warmUpFrames;
     private static boolean startedJavaFx;
 
-    // Skips (rather than fails) when there is no video or no display, e.g. on a headless build server where
-    // *.mp4 is not checked in, so "mvn verify" still passes there. Developers run it locally with both.
+    // skips (not fails) with no video or display, e.g. on a headless build server
     @BeforeAll
     static void setUp() throws Exception {
         File source = new File(System.getProperty("loadtest.video", "loadtest.mp4"));
@@ -119,7 +103,8 @@ class PlaybackLoadIT {
     @ParameterizedTest(name = "{0} effects")
     @ValueSource(ints = {6, 12})
     void multiThreadedKeepsUpAtLeastAsWellAsSingleThreaded(int effectCount) throws Exception {
-        String effects = "-" + EFFECT_CHAIN.substring(0, effectCount);
+        // -S on every level, so subtitles are tested alongside the other effects.
+        String effects = "-S" + EFFECT_CHAIN.substring(0, effectCount);
 
         Result single = play(true, effects);
         Result multi = play(false, effects);
@@ -177,7 +162,7 @@ class PlaybackLoadIT {
                     ? new SingleThreadedVideoPlayerModel(false, videoSizeChanged, view::setImage, statusChanged,
                             (playing, paused) -> { }, audioOn -> { }, processors)
                     : new MultiThreadedVideoPlayerModel(false, videoSizeChanged, view::setImage, statusChanged,
-                            (playing, paused) -> { }, audioOn -> { }, processors, false); // false: subtitles off
+                            (playing, paused) -> { }, audioOn -> { }, processors, true); // true: subtitles on, as -S asks
             model.setFrameTimingListener(timings);
             stage.show();
             model.play(clip);

@@ -25,18 +25,7 @@ import java.util.concurrent.atomic.AtomicReferenceArray;
 
 import org.bytedeco.javacv.Frame;
 
-/*
- * Adds uneven brightness and colour staining to simulate aged film emulsion.
- * Having played around with the tuning of this as much as I'd like, but the
- * effect still looks okay.
- *
- * Initialisation builds multi-scale noise fields and colour lookup tables.
- * process samples those fields in image blocks and applies the selected
- * channel scales through applyMottleBlock.
- *
- * Thread safety: one instance is shared by concurrent workers. Fields set in initialise() are read-only after;
- * per-frame state is local. Only damageMaskCache is shared, and is safe to race on (see damageMask).
- */
+// Blotchy aged-emulsion staining. Thread safe: per-frame state is local; damageMaskCache is safe to race on.
 public class FrameMottler extends FrameProcessor {
     private static final int NOISE_GRID_WIDTH = 64;
     private static final int NOISE_GRID_HEIGHT = 36;
@@ -69,8 +58,7 @@ public class FrameMottler extends FrameProcessor {
 
     private final int instanceIndex;
     private int mediaSeed;
-    // Masks are cached by index in slot (index % 3). Segment N uses masks N and N+1, so two
-    // neighbouring segments in flight never share a slot. Entries are never changed once stored.
+    // slot = index % 3, so the masks of two neighbouring segments never collide
     private static final int DAMAGE_MASK_CACHE_SLOTS = 3;
     private final AtomicReferenceArray<DamageMask> damageMaskCache = new AtomicReferenceArray<>(DAMAGE_MASK_CACHE_SLOTS);
     private int[] xGridLeft;
@@ -192,8 +180,7 @@ public class FrameMottler extends FrameProcessor {
         }
 
         double[] field = buildNoiseField(index, DAMAGE_MASK_SALT, DAMAGE_MASK_SMOOTHING_PASSES);
-        // Always safe to store: masks are deterministic and a lookup checks the index, so the worst a stale
-        // frame (e.g. one decoded just before a seek) can do is evict a mask that then gets rebuilt identically.
+        // always safe: masks are deterministic, so the worst case is an identical rebuild
         damageMaskCache.set(slot, new DamageMask(index, field));
         return field;
     }

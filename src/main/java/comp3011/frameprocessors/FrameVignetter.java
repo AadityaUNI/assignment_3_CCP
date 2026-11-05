@@ -14,16 +14,7 @@ import java.nio.ByteBuffer;
 
 import org.bytedeco.javacv.Frame;
 
-/**
- * Darkens image edges to create a vignette. Older projectors struggle to provide uniform illumination over the full
- * projection bed, often showing fall away at the edges. This effect nicely simulates this.
- *
- * <p>
- * Initialisation builds Gaussian-like fading lookup tables for each axis.
- * {@link #vignetteFrame(ByteBuffer)} combines the horizontal and vertical
- * factors to scale each pixel's colour channels.
- * </p>
- */
+/** Darkens the edges like an unevenly lit projector, using per-axis Gaussian lookup tables. */
 public class FrameVignetter extends FrameProcessor {
     private static final double EDGE_FADE_PERCENTAGE = 40.0;
 
@@ -103,8 +94,7 @@ public class FrameVignetter extends FrameProcessor {
             return envelope;
         }
 
-        // Gaussian envelope: exp(-d^2 / (2 sigma^2)).
-        // Choose sigma so that the centre of each edge has the requested fade.
+        // exp(-d^2 / (2 sigma^2)), with sigma chosen so each edge's centre gets the requested fade
         double sigma = centre / Math.sqrt(-2.0 * Math.log(edgeScale));
 
         for (int position = 0; position < size; position++) {

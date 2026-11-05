@@ -14,16 +14,7 @@ import java.nio.ByteBuffer;
 
 import org.bytedeco.javacv.Frame;
 
-/**
- * Warms frame colours to simulate a lower colour-temperature film image. This is not really a film stock thing, more an
- * old projector thing. Definitely gives playback a more ye olde look.
- *
- * <p>
- * Initialisation converts the source and destination colour temperatures to
- * RGB scales and builds channel lookup tables. {@link #yellowFrame(ByteBuffer)}
- * applies those tables to every BGR pixel.
- * </p>
- */
+/** Warms colours to a lower colour temperature, like an old projector lamp, via channel lookup tables. */
 public class FrameYellower extends FrameProcessor {
     private static final double SOURCE_KELVIN = 3200.0;
     private static final double DESTINATION_KELVIN = 2700.0;
@@ -68,8 +59,7 @@ public class FrameYellower extends FrameProcessor {
         Rgb sourceWhite = kelvinToRgb(SOURCE_KELVIN);
         Rgb destinationWhite = kelvinToRgb(DESTINATION_KELVIN);
 
-        // Use a diagonal white-balance transform: each channel is scaled by the ratio
-        // between the destination white point and the source white point.
+        // white balance: scale each channel by destination white / source white
         double redScale = destinationWhite.red() / sourceWhite.red();
         double greenScale = destinationWhite.green() / sourceWhite.green();
         double blueScale = destinationWhite.blue() / sourceWhite.blue();
@@ -88,8 +78,7 @@ public class FrameYellower extends FrameProcessor {
     }
 
     private Rgb kelvinToRgb(double kelvin) {
-        // Empirical Kelvin-to-RGB approximation. Dividing by 100 is part of the
-        // standard curve fit, whose branches approximate red-hot to blue-white light.
+        // standard empirical Kelvin-to-RGB curve fit (works in hundreds of kelvin)
         double temperature = kelvin / 100.0;
         double red;
         double green;

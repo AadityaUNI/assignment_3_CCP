@@ -30,15 +30,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.function.Supplier;
 
-/**
- * Created in the VideoPlayerApp's main function to receive and parse the video player's command-line arguments.
- *
- * <p>
- * Extracts the video file and supported launch options, reports invalid input
- * or help text, and exposes the resulting launch configuration via methods to the
- * {@link comp3011.VideoPlayerApp}.
- * </p>
- */
+/** Parses the command line into the video file, launch options and effect list. */
 public class CommandLineController {
     private final String[] args;
 
@@ -47,17 +39,14 @@ public class CommandLineController {
     private boolean maximiseRequested;
     private boolean singleThreadingRequested;
     private Integer displayId;
+    private String keyFile; // path given with --keyfile, or null to use the OPENAI_API_KEY environment variable
     private File videoFile;
     private String errorMessage;
     private ArrayList<FrameProcessor> processorsRequested = new ArrayList<>();
     private final HashMap<Character, Supplier<FrameProcessor>> validEffects = new HashMap<>();
 
-    // Valid effects, keyed by command-line letter (e.g. "-jm" = jitter then mottle). To add a new effect:
-    //   1. Extend FrameProcessor: initialise() for per-video setup, process() per frame. One instance is shared
-    //      by concurrent workers, so process() must keep per-frame state in locals, not fields.
-    //   2. Register it here with an unused letter, e.g. validEffects.put('x', FrameExample::new);
-    //   3. Add the letter to printHelp() and to the tests.
-    // Suppliers, not instances, so each letter typed gets its own processor.
+    // Letter -> effect. New effect: extend FrameProcessor (no per-frame state in fields), register it here,
+    // then add it to printHelp() and the tests. Suppliers so each letter typed gets its own instance.
     {
         validEffects.put('n', FrameNumberer::new);
         validEffects.put('s', FrameScratcher::new);
@@ -100,6 +89,10 @@ public class CommandLineController {
         return displayId;
     }
 
+    public String getKeyFile() {
+        return keyFile;
+    }
+
     public boolean isAudioRequested() {
         return audioRequested;
     }
@@ -123,9 +116,12 @@ public class CommandLineController {
 
     private void parse() {
         List<String> videoFiles = new ArrayList<>();
-        for (String arg : args) {
+        for (int i = 0; i < args.length; i++) {
+            String arg = args[i];
             if ("-h".equals(arg) || "--help".equals(arg)) {
                 helpRequested = true;
+            } else if ("--keyfile".equals(arg) && i + 1 < args.length) {
+                keyFile = args[++i]; // the next argument is the key file's path, not the video
             } else if ("-a".equals(arg) || "--audio".equals(arg)) {
                 audioRequested = true;
             } else if ("-x".equals(arg) || "--maximise".equals(arg)) {
@@ -223,6 +219,7 @@ public class CommandLineController {
         System.out.println("  -x, --maximise     Open the player maximised");
         System.out.println("  -1, --monitor-1    Open the player on display 1");
         System.out.println("  -2, --monitor-2    Open the player on display 2");
+        System.out.println("  --keyfile <file>   Read the OpenAI API key from this file (default: OPENAI_API_KEY)");
         System.out.println();
         System.out.println("Frame processors:");
         System.out.println("  -n, --number-frames    Render the frame number onto each frame");

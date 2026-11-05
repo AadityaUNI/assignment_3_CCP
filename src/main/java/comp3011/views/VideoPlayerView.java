@@ -32,21 +32,13 @@ import javafx.scene.shape.Rectangle;
 import javafx.scene.shape.SVGPath;
 import javafx.scene.shape.StrokeLineCap;
 
-/**
- * The view part of the video player model-view-controller architecture.
- *
- * <p>
- * This is the JavaFX presentation layer for the video player. It builds the
- * scene graph containing the video surface, playback controls, status display,
- * and tooltips. It exposes controls and display-update methods for
- * {@link comp3011.controllers.VideoPlayerController}, but contains no playback logic (which all lives
- * in the controller).
- * </p>
- */
+/** MVC view: the video, subtitle layer, buttons, status and tooltips. No playback logic. */
 public class VideoPlayerView {
     private static final int ICON_SIZE = 28;
 
     private final ImageView imageView = new ImageView();
+    // transparent subtitle layer over the video, so it can be hidden instantly
+    private final ImageView subtitleView = new ImageView();
     private final Label statusLabel = new Label("No video loaded");
     private final Label tooltipLabel = new Label();
     private final Pane tooltipLayer = new Pane();
@@ -64,12 +56,19 @@ public class VideoPlayerView {
         imageView.setPreserveRatio(true);
         imageView.setSmooth(false);
 
-        videoPane = new StackPane(imageView);
+        // same size and fit as the video so they line up; added second so it draws on top
+        subtitleView.setPreserveRatio(true);
+        subtitleView.setSmooth(true); // smooth scaling keeps the letter edges clean
+        subtitleView.setMouseTransparent(true);
+
+        videoPane = new StackPane(imageView, subtitleView);
         videoPane.setStyle("-fx-background-color: black;");
         videoPane.setMinSize(0, 0);
         videoPane.setMaxSize(Double.MAX_VALUE, Double.MAX_VALUE);
         imageView.fitWidthProperty().bind(videoPane.widthProperty());
         imageView.fitHeightProperty().bind(videoPane.heightProperty());
+        subtitleView.fitWidthProperty().bind(videoPane.widthProperty());
+        subtitleView.fitHeightProperty().bind(videoPane.heightProperty());
 
         startOverButton = iconButton(createLoopIcon(false, null));
         backFiveButton = iconButton(createLoopIcon(false, "5"));
@@ -143,6 +142,15 @@ public class VideoPlayerView {
         imageView.setImage(image);
     }
 
+    public void setSubtitleImage(Image image) {
+        subtitleView.setImage(image);
+    }
+
+    // Hiding the layer removes the subtitle on the next redraw; the video underneath is untouched.
+    public void setSubtitlesVisible(boolean visible) {
+        subtitleView.setVisible(visible);
+    }
+
     public void setVideoDisplaySize(double width, double height) {
         videoPane.setPrefSize(width, height);
     }
@@ -173,8 +181,7 @@ public class VideoPlayerView {
         subtitleButton.setDisable(disabled);
     }
 
-    // There are a bunch of tooltip handling methods starting from here. We want to use tooltips so that people with
-    // mouse/trackpads can learn what the hotkeys are and hopefully just use them instead, because they are easy/fast.
+    // Tooltips show each button's hotkey.
     private void setButtonTooltips() {
         setButtonTooltip(startOverButton, "[HOME]");
         setButtonTooltip(backFiveButton, "[LEFT]");
@@ -247,8 +254,7 @@ public class VideoPlayerView {
         return button;
     }
 
-    // Decided to hand code icons here instead of using pre-drawn assets/resources, since the icons are simple and
-    // universally recognised and this one they will look better on different DPI displays.
+    // Icons are drawn in code so they stay sharp at any DPI.
     private Node createLoopIcon(boolean clockwise, String text) {
         Pane pane = new Pane();
         pane.setMinSize(ICON_SIZE, ICON_SIZE);
@@ -363,8 +369,7 @@ public class VideoPlayerView {
         return wave;
     }
 
-    // Screen outline with two lines of 'text' along the bottom, like a captioned picture. A slash through it means
-    // subtitles are off.
+    // Screen with two caption lines; slashed when subtitles are off.
     private Node createSubtitleIcon(boolean subtitlesEnabled) {
         Pane pane = new Pane();
         pane.setMinSize(ICON_SIZE, ICON_SIZE);

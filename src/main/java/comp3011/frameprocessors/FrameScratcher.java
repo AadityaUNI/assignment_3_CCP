@@ -17,16 +17,7 @@ import java.util.Random;
 
 import org.bytedeco.javacv.Frame;
 
-/**
- * Draws moving vertical scratches to simulate damaged film stock. Some scratches are one pixel wide, some are two. They
- * move at different rates horizontally and come and go from the film stock.
- *
- * <p>
- * {@link #generateScratches()} creates a deterministic set of scratches over
- * the video timeline. {@link #process(Frame, InfoFrame)} finds the scratch
- * segment visible in the current frame and draws it as a black vertical line.
- * </p>
- */
+/** Moving vertical film scratches, generated once for the whole timeline and drawn per frame. */
 public class FrameScratcher extends FrameProcessor {
     private static final int FRAMES_PER_NEW_SCRATCH = 48;
     private static final double MEAN_SCRATCH_LENGTH = 96;

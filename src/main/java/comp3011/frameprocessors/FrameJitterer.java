@@ -19,18 +19,7 @@ import java.util.Random;
 
 import org.bytedeco.javacv.Frame;
 
-/*
- * Randomly offsets each image frame to simulate unstable film transport. The sprockets driving film through old
- * projectors always had a tiny bit of slack or take-up in them, causing frames to jitter up and down or left and right
- * slightly as they went through the projection bed. Simple but effective little effect.
- *
- * A deterministic per-frame random sequence chooses horizontal and vertical
- * offsets. jitterFrame copies the original pixels into the shifted position
- * and fills exposed areas with black.
- *
- * Thread safety: one instance is shared by concurrent workers. mediaSeed is only written in initialise();
- * the Random and pixel buffers are per-frame locals.
- */
+// Shifts frames a few pixels like loose projector sprockets. Thread safe: only locals change per frame.
 public class FrameJitterer extends FrameProcessor {
     private static final int SEED_SALT = 0x4a495454;
 
@@ -82,8 +71,7 @@ public class FrameJitterer extends FrameProcessor {
     private long seedForFrame(int frameNumber) {
         long seed = Integer.toUnsignedLong(mediaSeed) + Integer.toUnsignedLong(frameNumber);
 
-        // Mix adjacent frame numbers so Random's first samples are not correlated
-        // across consecutive frames.
+        // mix the bits so consecutive frames don't get similar first samples
         seed ^= seed >>> 30;
         seed *= 0xbf58476d1ce4e5b9L;
         seed ^= seed >>> 27;

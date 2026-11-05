@@ -33,12 +33,9 @@ public class ExceptionController {
         );
     }
 
-    // ---- Failures when calling OpenAI (used by /api/v1/subtitles) ----
-    // The player only needs to tell "try again later" (503) from "retrying won't help" (502/422). Messages stay generic
-    // on purpose: the upstream error text can mention the account or key, so it is never sent to the client.
+    // OpenAI failures: 503 = retry later, 502/422 = retrying won't help. Generic messages so nothing leaks.
 
-    // No connection, DNS failure or timeout (i.e. no internet), a busy OpenAI (429) or an OpenAI outage (5xx).
-    // All temporary, so 503: the player should back off and retry.
+    // No internet, a busy OpenAI (429) or an outage (5xx): all temporary, so 503.
     @ResponseStatus(HttpStatus.SERVICE_UNAVAILABLE)
     @ExceptionHandler(value = {OpenAIIoException.class, OpenAIRetryableException.class,
             RateLimitException.class, InternalServerException.class},

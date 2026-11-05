@@ -15,16 +15,7 @@ import java.util.Random;
 
 import org.bytedeco.javacv.Frame;
 
-/**
- * Varies a frame's brightness to simulate film-projector flicker. Because of slight variations in timing and lamp
- * incandescence, old movie projectors would cause the movies to flicker, hence movies became known as 'flicks'.
- *
- * <p>
- * The media name and frame number seed a deterministic random brightness
- * scale, so the same frame always receives the same variation.
- * {@link #dimFrame(ByteBuffer, double)} applies that scale to each pixel.
- * </p>
- */
+/** Projector flicker: dims each frame by a random amount seeded from the media name and frame number. */
 public class FrameFlickerer extends FrameProcessor {
     private static final double FLICKER_PERCENTAGE_SD = 5.0;
 

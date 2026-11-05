@@ -25,14 +25,7 @@ import javafx.scene.image.Image;
 import javafx.scene.input.KeyCode;
 import javafx.scene.input.KeyEvent;
 
-/**
- * The controller part of the video player model-view-controller architecture.
- * 
- * <p>
- * Wires up events from the {@link VideoPlayerView} to the {@link VideoPlayerModel}.
- * This includes button actions, keyboard shortcuts and display resizing.
- * </p>
- */
+/** MVC controller: wires the view's buttons and hotkeys to the model. */
 public class VideoPlayerController {
     private final VideoPlayerModel model;
     private final VideoPlayerView view;
@@ -66,7 +59,8 @@ public class VideoPlayerController {
                     this::onPlaybackStateChanged,
                     this::onAudioOutputStateChanged,
                     processors,
-                    subtitlesEnabled);
+                    subtitlesEnabled,
+                    view::setSubtitleImage);
         }
 
         view.getStartOverButton().setOnAction(_ -> startOver());
@@ -79,6 +73,7 @@ public class VideoPlayerController {
 
         view.getSubtitleButton().setOnAction(_ -> toggleSubtitles());
         view.showSubtitlesEnabled(subtitlesEnabled);
+        view.setSubtitlesVisible(subtitlesEnabled);
     }
 
     public void installKeyboardShortcuts(Scene scene) {
@@ -142,7 +137,9 @@ public class VideoPlayerController {
     }
 
     private void toggleSubtitles() {
-        view.showSubtitlesEnabled(model.toggleSubtitles()); // the model owns the flag and returns the new state
+        boolean subtitlesOn = model.toggleSubtitles(); // the model owns the flag and returns the new state
+        view.showSubtitlesEnabled(subtitlesOn); // button icon
+        view.setSubtitlesVisible(subtitlesOn); // show or hide the subtitle layer; playback is not touched
     }
 
     private void stopAndExit() {

@@ -110,8 +110,7 @@ class SpeechServiceSegmentTests {
 
     @Test
     void wordCountCarriesAcrossSegments() {
-        // Whisper splits mid-sentence: 2 words in segment 1, then "my friend." in segment 2. Together that is 4 words,
-        // so the full stop ends ONE subtitle spanning both segments.
+        // split mid-sentence across segments: 4 words in total, so one subtitle spans both
         var segments = List.of(clean("Hello there", 0, 1), clean("my friend.", 1, 2));
         Subtitle[] subs = service.processSegments(segments, evenWords("Hello there my friend.", 0.5));
 
@@ -136,8 +135,7 @@ class SpeechServiceSegmentTests {
 
     @Test
     void subtitleIsSplitBeforeTheWordThatReachesEightyFourCharacters() {
-        // 12 words of 8 letters, no punctuation, all within 1.2 s. Each word adds 9 chars (with the space), so the
-        // 10th word (81 + 8 >= 84) is the first one that does not fit: 9 words, then 3.
+        // 12 x 8-letter words: the 10th would reach 84 chars (81 + 8), so 9 words then 3
         String text = String.join(" ", java.util.Collections.nCopies(12, "abcdefgh"));
         Subtitle[] subs = service.processSegments(List.of(clean(text, 0, 1.2)), evenWords(text, 0.1));
 

@@ -29,11 +29,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
-/**
- * Effects are deterministic: the same frame number of the same media always gets the same result. So the output of a
- * single-threaded, in-order run is an exact reference, and any race on shared state (per-block fields, the damage mask
- * cache) shows up as a frame whose bytes differ from it.
- */
+/** Effects are deterministic, so any frame that differs from a single-threaded run reveals a race. */
 public class FrameMottlerThreadSafetyTests {
     private static final int WIDTH = 320;
     private static final int HEIGHT = 180;
@@ -59,9 +55,7 @@ public class FrameMottlerThreadSafetyTests {
         return processor;
     }
 
-    // Each class seeds its instances from its own static instance counter, so a FrameMottler and a FrameMottlerLegacy
-    // normally get different seeds and different-looking output. Giving both the same seed (after initialise, which
-    // sets it) makes their output directly comparable.
+    // same seed for both mottlers (set after initialise) so their output can be compared
     private static void setMediaSeed(FrameProcessor processor, int seed) throws ReflectiveOperationException {
         Field mediaSeed = processor.getClass().getDeclaredField("mediaSeed");
         mediaSeed.setAccessible(true);
@@ -92,8 +86,7 @@ public class FrameMottlerThreadSafetyTests {
         return output;
     }
 
-    // Runs every frame in the given order on THREADS workers, all released at once so they overlap as much as
-    // possible, like the model's effect workers. Returns the output indexed by frame number.
+    // runs the frames on THREADS workers released together for maximum overlap; output by frame number
     private static byte[][] onWorkers(FrameJob job, List<Integer> order) throws Exception {
         ExecutorService pool = Executors.newFixedThreadPool(THREADS);
         try {
@@ -135,14 +128,12 @@ public class FrameMottlerThreadSafetyTests {
         return order;
     }
 
-    // Mottles frame 10 of movie.mp4 fresh, then again after the mottler has processed other.mp4.
-    // Returns true if both results are the same, i.e. nothing from other.mp4 leaked into movie.mp4.
+    // true if frame 10 of movie.mp4 looks the same before and after mottling other.mp4 (nothing leaked)
     private static boolean frameUnchangedAfterSwitchingVideos(FrameProcessor mottler) throws Exception {
         mottler.initialise(videoInfo("movie.mp4"));
         byte[] movieFresh = mottle(mottler, 10);
 
-        // Leave other.mp4's masks for frame 10's segment in the cache. Frame 100 moves the cache off that segment
-        // first, so even a cache that only remembers the segment number has to rebuild it with other.mp4's masks.
+        // leave other.mp4's masks for frame 10's segment cached (frame 100 forces a rebuild first)
         mottler.initialise(videoInfo("other.mp4"));
         mottle(mottler, 100);
         mottle(mottler, 10);
@@ -175,9 +166,7 @@ public class FrameMottlerThreadSafetyTests {
 
     @Test
     void sharedLegacyMottlerCorruptsFrames() throws Exception {
-        // The original problem: the legacy mottler keeps per-block scale indices and the current damage masks in
-        // fields, so workers sharing it overwrite each other's values mid-frame. This also shows the shared-instance
-        // tests below can catch a race, so their passing means something.
+        // the legacy mottler keeps per-frame state in fields, so sharing it races (proves these tests can catch one)
         FrameMottlerLegacy legacy = initialised(new FrameMottlerLegacy(), "movie.mp4");
         byte[][] reference = sequential(legacy);
 
@@ -204,8 +193,7 @@ public class FrameMottlerThreadSafetyTests {
 
     @Test
     void sharedMottlerMatchesSequentialWhenFramesArriveOutOfOrder() throws Exception {
-        // Shuffled order, like seeking back and forth: frames from far-apart mask segments race for the same cache
-        // slot, so masks are constantly evicted and rebuilt while other workers are reading them.
+        // shuffled like seeking around, so cache slots are constantly evicted and rebuilt under readers
         FrameMottler mottler = initialised(new FrameMottler(), "movie.mp4");
         byte[][] reference = sequential(mottler);
 
@@ -221,9 +209,7 @@ public class FrameMottlerThreadSafetyTests {
 
     @Test
     void sharedMottlerOutpacesLockedLegacy() throws Exception {
-        // Making the legacy mottler safe to share needs a lock around process(), which lets only one worker mottle
-        // at a time. (One legacy instance per worker is not an option: each instance gets its own seed, so a frame
-        // would look different depending on which worker ran it.) The refactored mottler needs no lock.
+        // a shared legacy mottler needs a lock around process(); the refactored one doesn't, so it should be faster
         assumeTrue(Runtime.getRuntime().availableProcessors() >= 4, "needs at least 4 cores to measure a speedup");
 
         FrameMottlerLegacy legacy = initialised(new FrameMottlerLegacy(), "movie.mp4");

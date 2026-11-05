@@ -15,17 +15,7 @@ import java.util.Random;
 
 import org.bytedeco.javacv.Frame;
 
-/**
- * Adds irregular dark spots and blotches to simulate damaged film.
- * Reasonable CPU intensive but this one is a great effect.
- *
- * <p>
- * {@link #process(Frame, InfoFrame)} generates a deterministic,
- * Poisson-distributed number of marks for each frame.
- * {@link #drawPepperShape(ByteBuffer, double, double, double, double, double, double, double, PepperShape)}
- * creates each softly edged, warped elliptical spot.
- * </p>
- */
+/** Dark soft-edged spots and blotches, a deterministic Poisson-distributed number per frame. */
 public class FramePepperer extends FrameProcessor {
     private static final double PEPPER_MARKS_PER_SECOND = 10.0;
     private static final double MIN_PEPPER_SIZE_PERCENTAGE = 0.25;

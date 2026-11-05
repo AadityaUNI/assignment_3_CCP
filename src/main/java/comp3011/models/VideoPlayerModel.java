@@ -12,16 +12,7 @@ package comp3011.models;
 
 import java.io.File;
 
-/**
- * The model part of the video player model-view-controller architecture.
- *
- * <p>
- * Defines the playback operations the {@link comp3011.controllers.VideoPlayerController} drives, so the
- * controller is independent of the concurrency model in use. Implementations are
- * {@link MultiThreadedVideoPlayerModel} (the default) and
- * {@link SingleThreadedVideoPlayerModel} (the original reference design, selected with {@code --single}).
- * </p>
- */
+/** MVC model interface: multi-threaded by default, the single-threaded original with --single. */
 public interface VideoPlayerModel {
     void play(File file);
 

@@ -19,16 +19,7 @@ import java.nio.ByteBuffer;
 
 import org.bytedeco.javacv.Frame;
 
-/*
- * Simulates bright light bleeding into nearby pixels, with a warm colour bias.
- * This one is expensive in CPU time!
- *
- * For each frame, buildBrightMask identifies bright regions, blurBrightMask
- * spreads their influence, and applyBleed adds the resulting coloured glow.
- *
- * Thread safety: one instance is shared by concurrent workers. Fields are only written in initialise();
- * the per-frame masks are locals passed down as arguments, so workers never see each other's masks.
- */
+// Warm glow bleeding out of bright areas (CPU heavy). Thread safe: per-frame masks are locals, fields set once.
 public class FrameBleeder extends FrameProcessor {
     private static final int MASK_BLOCK_SIZE = 4;
     private static final int BLUR_RADIUS = 3;

@@ -28,36 +28,21 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicLong;
 
-/**
- * Remembers Whisper's answers so a repeat request never calls OpenAI again. That makes the second viewing of a video
- * (especially after seeking forward) instant, and lets subtitles that were seen before keep showing when the internet
- * is down.
- *
- * <p>
- * Shape: media key -> (chunk index -> subtitles). The media key is made by the player from the file's contents, so any
- * client playing the same file shares the same entries. Each media key also has an expiry time so the file on disk
- * can't grow forever: every use pushes it back, and a key nobody has used for {@link #TIME_TO_LIVE_SECONDS} is
- * dropped the next time the cache is loaded or saved.
- * </p>
- *
- * <p>
- * The cache is read from disk once when the server starts and written once when it closes. The server runs inside the
- * player, so closing the player writes it. A crash loses only what was added during that run.
- * </p>
- */
+/** Media key -> chunk -> subtitles, saved to disk so repeat plays (even offline) skip OpenAI; unused keys expire. */
 @Component
 public class SubtitleCache {
     // 30 days since the key was last used.
     static final long TIME_TO_LIVE_SECONDS = 30L * 24 * 60 * 60;
+    // Also saved this often while running, so a crash or a killed player loses at most ~30 s of new subtitles.
+    static final long SAVE_INTERVAL_MILLIS = 30_000;
 
-    // Shape of the file: { "<media key>": { "expiry": <epoch seconds>, "segments": { "<chunk>": [ subtitles ] } } }
-    // Plain records so Jackson can read and write them with no extra setup.
+    // On disk: { "<media key>": { "expiry": <epoch s>, "segments": { "<chunk>": [ subtitles ] } } }
     record StoredMedia(long expiry, Map<Long, Subtitle[]> segments) {
     }
 
-    // One media key's chunks plus when it expires. The map is concurrent because the player's 3 workers (and any other
-    // clients) read and write at the same time; expiry is volatile because any of those threads may refresh it.
+    // One video's chunks; concurrent/volatile because several request threads use it at once.
     private static final class MediaEntry {
         final ConcurrentHashMap<Long, SubtitleResponse> segments = new ConcurrentHashMap<>();
         volatile long expiryEpochSec;
@@ -67,9 +52,9 @@ public class SubtitleCache {
     private final JsonMapper json = JsonMapper.builder().build();
     private final Path file;
     private final Clock clock;
+    private final AtomicLong lastSaveMillis = new AtomicLong(); // 0, so the first check after start saves
 
-    // Spring uses this one (@Autowired is needed because there are two constructors and it can't guess which).
-    // The file location can be changed in application.properties.
+    // Spring's constructor (@Autowired picks it out of the two); file path is configurable.
     @Autowired
     public SubtitleCache(@Value("${subtitle.cache.file:cache/subtitle-cache.json}") String filePath) {
         this(Path.of(filePath), Clock.systemUTC());
@@ -99,12 +84,20 @@ public class SubtitleCache {
         entry.expiryEpochSec = newExpiry();
     }
 
+    // Checked on every request: saves if 30 s have passed; compareAndSet lets only one thread do it.
+    public void saveIfDue() {
+        long now = clock.millis();
+        long last = lastSaveMillis.get();
+        if (now - last >= SAVE_INTERVAL_MILLIS && lastSaveMillis.compareAndSet(last, now)) {
+            save();
+        }
+    }
+
     private long newExpiry() {
         return clock.instant().getEpochSecond() + TIME_TO_LIVE_SECONDS;
     }
 
-    // Runs once after Spring creates the bean. Never throws: a missing or damaged file just means an empty cache,
-    // because a broken cache must not stop the server (and so the player's subtitles) from starting.
+    // Never throws: a missing or broken file just means starting with an empty cache.
     @PostConstruct
     void load() {
         if (!Files.exists(file)) {
@@ -130,8 +123,7 @@ public class SubtitleCache {
         }
     }
 
-    // Runs when Spring closes the server. Writes to a temporary file first and then renames it over the real one, so
-    // a crash half way through leaves the old complete file instead of a broken one.
+    // Write a temp file then rename it over the real one, so a crash mid-save can't corrupt it.
     @PreDestroy
     void save() {
         long now = clock.instant().getEpochSecond();

@@ -110,4 +110,41 @@ public class CommandLineControllerTests {
         assertEquals(true, badEffect.getProcessors().isEmpty());
     }
 
+    @Test
+    void subtitleFramesParse() throws IOException {
+        // short form on its own turns subtitles on
+        CommandLineController shortForm = new CommandLineController(new String[]{"-S", video()});
+        assertNull(shortForm.getErrorMessage());
+        assertEquals(List.of("FrameSubtitler"), processorNames(shortForm));
+        assertEquals(true, shortForm.isSubtitlesRequested());
+
+        // long form behaves the same
+        CommandLineController longForm = new CommandLineController(new String[]{"--subtitle-frames", video()});
+        assertNull(longForm.getErrorMessage());
+        assertEquals(List.of("FrameSubtitler"), processorNames(longForm));
+        assertEquals(true, longForm.isSubtitlesRequested());
+
+        // S can be stacked in a chain with other effects and keeps its place in the order
+        CommandLineController chained = new CommandLineController(new String[]{"-wSv", "-a", video()});
+        assertNull(chained.getErrorMessage());
+        assertEquals(List.of("FrameBlackAndWhiter", "FrameSubtitler", "FrameVignetter"), processorNames(chained));
+        assertEquals(true, chained.isSubtitlesRequested());
+        assertEquals(true, chained.isAudioRequested());
+    }
+
+    @Test
+    void subtitleLetterIsCaseSensitive() throws IOException {
+        // lowercase -s is still scratch, so subtitles must start switched off
+        CommandLineController scratch = new CommandLineController(new String[]{"-s", video()});
+        assertNull(scratch.getErrorMessage());
+        assertEquals(List.of("FrameScratcher"), processorNames(scratch));
+        assertEquals(false, scratch.isSubtitlesRequested());
+
+        // both letters in one chain give one of each, in order
+        CommandLineController both = new CommandLineController(new String[]{"-sS", video()});
+        assertNull(both.getErrorMessage());
+        assertEquals(List.of("FrameScratcher", "FrameSubtitler"), processorNames(both));
+        assertEquals(true, both.isSubtitlesRequested());
+    }
+
 }

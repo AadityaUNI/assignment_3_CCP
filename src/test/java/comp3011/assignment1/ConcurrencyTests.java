@@ -89,12 +89,7 @@ public class ConcurrencyTests {
     }
 
 
-    // race conditions test: stats update with call to speech:
-    // call speech function 200 times, expect 200 good responses from a stub api which updates input and output tokens
-    // but our input and output tokens are not atomic integers, hence
-    // these will be overwritten repeatedly, surfacing a race condition.
-    // the actual amount will be verified with the global stats response to show
-    // the real service works correctly.
+    // 200 concurrent speech calls: the stub's plain counters race, while global stats should still be exact
     @Test @Order(2)
     void test500SpeechRequests_SurfaceRaceCondition() throws InterruptedException {
 

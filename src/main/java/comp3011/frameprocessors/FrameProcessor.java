@@ -15,20 +15,7 @@ import java.util.zip.CRC32;
 
 import org.bytedeco.javacv.Frame;
 
-/**
- * Base class for all the video player's frame-based compositing effects.
- *
- * <p>
- * {@link comp3011.models.VideoPlayerModel} initialises each processor once with video metadata,
- * then invokes {@link #process(Frame, InfoFrame)} for every image frame in a set order
- * before it is converted for display. Note that all FrameProcessors should be written
- * to be deterministic - that is they apply the same effect to the same frame number of
- * the same media name, but otherwise can look 'random'. This allows for the reliable
- * determination of accurately applied effects in the correct order free of any race
- * conditions, frame overwrites or frame tearing etc. Some helper methods are provided
- * for this.
- * </p>
- */
+/** Base for all effects: initialised once per video, then process() per frame. Must be deterministic per frame. */
 public abstract class FrameProcessor {
     protected InfoVideo videoInfo;
 
@@ -39,10 +26,7 @@ public abstract class FrameProcessor {
         this.videoInfo = videoInfo;
     }
 
-    // Obtain a unique seed for this media name and effect instance index. That is, for a given media name, say
-    // 'movie.mp4' and a given position in the list of effects being applied, this will return a unique and different
-    // seed for each effect. This is useful for creating the illusion of randomness whilst keeping everything
-    // deterministic.
+    // A seed unique to this media and effect position: looks random but stays deterministic.
     protected int saltedMediaSeed(String mediaName, int instanceIndex) {
         return hashMediaName(mediaName) + instanceIndex;
     }

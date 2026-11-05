@@ -20,28 +20,17 @@ import java.awt.Shape;
 import java.awt.font.GlyphVector;
 import java.awt.image.BufferedImage;
 import java.awt.image.DataBufferInt;
-import java.nio.ByteBuffer;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicReference;
 
-/**
- * Renders speech-to-text subtitles onto each frame. Selected with -S / --subtitle-frames, and applied in the effect
- * chain like any other frame processor.
- *
- * <p>
- * The model puts the subtitle for the frame's time into {@link InfoFrame#subs()} (null when there is none). This class
- * only draws it: split the text into at most two lines of at most 42 characters, draw them white with a black outline
- * into a transparent strip the width of the video, then blend that strip onto the bottom of the frame.
- * </p>
- */
+// -S effect: draws the frame's subtitle (2 x 42 chars max, white, black outline) into a transparent strip.
+// The strip sits on its own layer above the video, not in the pixels, so toggling off is instant.
 public class FrameSubtitler extends FrameProcessor {
     private static final int MAX_LINE_CHARS = 42;
     private static final int MAX_LINES = 2;
 
-    // The strip is the same for every frame that shows the same text, so keep the last one instead of redrawing it
-    // 30 times a second. Overlay is immutable, so sharing it between worker threads is safe. If two workers miss at
-    // the same moment they both draw an identical strip, which is harmless.
-    private final AtomicReference<Overlay> lastOverlay = new AtomicReference<>();
+    // Reuse the last strip while the text is the same; immutable, so safe to share, and lets the FX thread use ==.
+    private final AtomicReference<SubtitleOverlay> lastOverlay = new AtomicReference<>();
 
     public FrameSubtitler() {
     }
@@ -52,30 +41,15 @@ public class FrameSubtitler extends FrameProcessor {
         lastOverlay.set(null); // a new video may have a different size, so the old strip no longer fits
     }
 
+    // Leaves the pixels alone, so no pixel format checks needed.
     @Override
-    public void process(Frame frame, InfoFrame info) throws Exception {
-        if (frame.image == null || frame.image.length == 0 || frame.image[0] == null) {
-            return;
-        }
-
-        if (!(frame.image[0] instanceof ByteBuffer pixels)) {
-            throw new Exception("FrameSubtitler requires byte-backed image frames");
-        }
-
-        if (videoInfo.imageDepth() != Frame.DEPTH_UBYTE && videoInfo.imageDepth() != Frame.DEPTH_BYTE) {
-            throw new Exception("FrameSubtitler requires 8-bit image frames");
-        }
-
-        if (videoInfo.imageChannels() < 3) {
-            throw new Exception("FrameSubtitler requires at least three image channels");
-        }
-
+    public void process(Frame frame, InfoFrame info) {
         Subtitle subs = info.subs();
         if (subs == null || subs.text().isBlank()) {
-            return; // nothing is being said at this moment
+            return; // nothing is being said at this moment, so the overlay stays null
         }
 
-        blendOntoFrame(pixels, overlayFor(subs.text()));
+        info.setSubtitleOverlay(overlayFor(subs.text()));
     }
 
     // ---- Step 1: split the text into lines ----
@@ -101,8 +75,7 @@ public class FrameSubtitler extends FrameProcessor {
         return List.of(text.substring(0, space), text.substring(space + 1));
     }
 
-    // Finds the space nearest the middle of the text where both halves fit on a line, or -1 if there is none.
-    // With requirePunctuation, only spaces that come straight after . , ! ? ; : count.
+    // Space nearest the middle where both halves fit (optionally only after punctuation), or -1.
     private static int findBreak(String text, boolean requirePunctuation) {
         int middle = text.length() / 2;
         int best = -1;
@@ -124,8 +97,8 @@ public class FrameSubtitler extends FrameProcessor {
 
     // ---- Step 2: draw the lines into a transparent strip ----
 
-    private Overlay overlayFor(String text) {
-        Overlay cached = lastOverlay.get();
+    private SubtitleOverlay overlayFor(String text) {
+        SubtitleOverlay cached = lastOverlay.get();
         if (cached == null || !cached.text().equals(text)) {
             cached = drawOverlay(text);
             lastOverlay.set(cached);
@@ -133,12 +106,11 @@ public class FrameSubtitler extends FrameProcessor {
         return cached;
     }
 
-    private Overlay drawOverlay(String text) {
+    private SubtitleOverlay drawOverlay(String text) {
         int width = videoInfo.imageWidth();
         int height = videoInfo.imageHeight();
 
-        // Size everything from the video so subtitles look the same on small and large videos. The width term stops
-        // 42 characters running off the edge of a narrow video.
+        // scale with the video; the width term keeps 42 chars on screen for narrow videos
         float fontSize = Math.min(height / 22f, width / 26f);
         int lineHeight = Math.round(fontSize * 1.2f);
         int bottomMargin = Math.round(fontSize * 0.8f);
@@ -170,42 +142,8 @@ public class FrameSubtitler extends FrameProcessor {
             g.dispose();
         }
 
+        // The strip's own pixel array, row by row. Nothing draws into it after this, so it is safe to share.
         int[] argb = ((DataBufferInt) strip.getRaster().getDataBuffer()).getData();
-        return new Overlay(text, stripHeight, argb);
-    }
-
-    // ---- Step 3: blend the strip onto the bottom of the frame ----
-
-    private void blendOntoFrame(ByteBuffer pixels, Overlay overlay) {
-        int width = videoInfo.imageWidth();
-        int channels = videoInfo.imageChannels();
-        int stride = videoInfo.imageStride();
-        int top = videoInfo.imageHeight() - overlay.height();
-
-        for (int y = 0; y < overlay.height(); y++) {
-            int rowStart = (top + y) * stride;
-            for (int x = 0; x < width; x++) {
-                int argb = overlay.argb()[y * width + x];
-                int alpha = argb >>> 24;
-                if (alpha == 0) {
-                    continue; // transparent: leave the video pixel alone
-                }
-                int base = rowStart + x * channels;
-                // The video is BGR byte order; the strip is ARGB.
-                mix(pixels, base, argb & 0xFF, alpha);               // blue
-                mix(pixels, base + 1, (argb >> 8) & 0xFF, alpha);    // green
-                mix(pixels, base + 2, (argb >> 16) & 0xFF, alpha);   // red
-            }
-        }
-    }
-
-    // Standard alpha blend: alpha of the subtitle colour over the rest of the video colour.
-    private void mix(ByteBuffer pixels, int index, int subtitleValue, int alpha) {
-        int videoValue = Byte.toUnsignedInt(pixels.get(index));
-        pixels.put(index, (byte) ((subtitleValue * alpha + videoValue * (255 - alpha)) / 255));
-    }
-
-    // The drawn strip for one piece of text. Never modified after it is built.
-    private record Overlay(String text, int height, int[] argb) {
+        return new SubtitleOverlay(text, stripHeight, argb);
     }
 }
