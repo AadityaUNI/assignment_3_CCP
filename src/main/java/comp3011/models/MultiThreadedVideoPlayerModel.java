@@ -577,6 +577,10 @@ public class MultiThreadedVideoPlayerModel implements VideoPlayerModel {
         while (playbackOpen) {
             Frame frame = grabFrame();
             if (frame == null) {
+                // null also means a read failed (USB pulled): stopping 1 s+ short of the end is an error
+                if (!videoFile.exists() || grabber.getTimestamp() < videoDurationUs - 1_000_000L) {
+                    throw new java.io.IOException("Media file could not be read");
+                }
                 // Read under grabberLock, so this names the generation whose position just ran off the end.
                 endOfStreamGeneration = seekGeneration.get();
                 return null;
