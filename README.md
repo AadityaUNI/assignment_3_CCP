@@ -16,7 +16,12 @@ Modified by Aaditya Singh, A1946894.
 - **`-S`, `--subtitle-frames`** starts the player with subtitles **on**. Without it they start **off**. Note that `-s` (lowercase) is the scratch effect.
 - Press **`s`**, or click the subtitle button to the right of mute, to toggle subtitles at any time during playback.
 - `-S` can be stacked with other effects like any other letter, e.g. `-wSv`. Subtitles are always drawn on top of the other effects.
-- The subtitle server starts inside the player, so there is nothing else to run. It needs the `OPENAI_API_KEY` environment variable. If the server can't start, the video still plays without subtitles.
+- The subtitle server starts inside the player, so there is nothing else to run. It reads the OpenAI key from the `OPENAI_API_KEY` environment variable, or from a file given with **`--keyfile <file>`**, e.g. a `key.txt` on a USB drive:
+  ```
+  .\mvnw javafx:run -Djavafx.args="E:\movie.mp4 -a -S --keyfile E:\key.txt"
+  ```
+  Only the file's path is passed around. The key is read once into the OpenAI client and is never printed, logged or copied. The first non-blank line of the file is used, and a byte order mark (BOM) that Notepad adds is ignored. If the server can't start, the video still plays without subtitles.
+- Each Whisper call has a 25 s timeout and 1 retry, so it always finishes before the player gives up on the request (60 s) and sends it again.
 
 ## Architecture
 

@@ -120,12 +120,25 @@ public class SubtitleCache {
         } catch (Exception e) {
             System.err.println("Subtitle cache could not be read (" + e.getMessage() + "). Starting empty.");
             media.clear();
+            keepUnreadableFile();
+        }
+    }
+
+    // Moves the bad file aside, so the next save (an empty cache) can't overwrite and lose it.
+    private void keepUnreadableFile() {
+        Path backup = file.resolveSibling(file.getFileName() + ".unreadable");
+        try {
+            Files.move(file, backup, StandardCopyOption.REPLACE_EXISTING);
+            System.err.println("Unreadable subtitle cache kept as " + backup.getFileName() + ".");
+        } catch (IOException e) {
+            System.err.println("Unreadable subtitle cache could not be moved aside (" + e.getMessage() + ").");
         }
     }
 
     // Write a temp file then rename it over the real one, so a crash mid-save can't corrupt it.
+    // refined by claude: synchronized: a periodic save and the shutdown save would otherwise write the same .tmp file at once.
     @PreDestroy
-    void save() {
+    synchronized void save() {
         long now = clock.instant().getEpochSecond();
         Map<String, StoredMedia> snapshot = new HashMap<>();
         media.forEach((key, entry) -> {

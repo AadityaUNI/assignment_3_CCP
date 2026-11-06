@@ -38,7 +38,7 @@ class SubtitleFetcher {
     private final long segmentLength = 20_000_000L; // microseconds (20 s)
     private static final double MIN_SUBTITLE_SECONDS = 1.0; // the brief asks for subtitles to stay up at least 1 s
     // show subtitles slightly early: Whisper's start times often run late and readers need a moment
-    private static final double SUBTITLE_LEAD_SECONDS = 0.3;
+    private static final double SUBTITLE_LEAD_SECONDS = 0;
     private final int subThreads = 3;
     private final ConcurrentHashMap<Long, Subtitle[]> subtitleCache = new ConcurrentHashMap<>();
     // Chunks still to fetch, sorted so ceiling() finds the next one; a worker claims one by winning remove().

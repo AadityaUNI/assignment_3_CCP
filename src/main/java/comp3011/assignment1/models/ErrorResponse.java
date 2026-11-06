@@ -1,3 +1,6 @@
+/*
+ * Author: Aaditya Singh, A1946894
+ */
 package comp3011.assignment1.models;
 
 import org.springframework.http.HttpStatus;

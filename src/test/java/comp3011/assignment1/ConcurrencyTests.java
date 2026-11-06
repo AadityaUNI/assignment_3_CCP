@@ -34,8 +34,9 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 @TestMethodOrder(MethodOrderer.OrderAnnotation.class)
+// Own cache file, so running the tests never reads or rewrites the player's real cache/subtitle-cache.json.
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.DEFINED_PORT,
-properties = "server.port=8080")
+properties = {"server.port=8080", "subtitle.cache.file=target/test-subtitle-cache.json"})
 public class ConcurrencyTests {
     @LocalServerPort
     private int port;

@@ -35,6 +35,7 @@ public class SpeechService {
     private static final double MIN_SEG_DURATION = 1;
     private static final double MAX_SEG_DURATION = 7;
     private static final double TOLERANCE = 0.5;
+    private static final double PAUSE_THRESHOLD = 0.7; // seconds for a pause to break subtitles
     private final OpenAIClient gpt;
     private final Clock clock;
     private final String startUTC;
@@ -183,7 +184,6 @@ public class SpeechService {
         int wordCount = 0; // words in the buffered subtitle; carries across segments like currText does
         StringBuilder currText = new StringBuilder();
         List<Subtitle> processed = new ArrayList<>();
-        boolean brokenSegment = false;
 
         for (int segIndex = 0; segIndex < segments.size(); segIndex++) {
             TranscriptionSegment seg = segments.get(segIndex);
@@ -193,7 +193,7 @@ public class SpeechService {
             // process this duration
             String[] parts = seg.text().trim().split("\\s+");
 
-            // probably not speech: drop it, but still skip its words since words[] is shared by all segments
+            // not speech: drop it, still skip its words since words[] is shared by all segments
             if (seg.noSpeechProb() > NO_SPEECH_PROB_LIMIT && seg.avgLogprob() < AVG_LOG_PROB_LIMIT) {
                 wordIndex += parts.length;
                 continue;
@@ -210,7 +210,8 @@ public class SpeechService {
                 }
                 wordIndex++; // always process the current word.
                 // word limit exceeded or word end doesn't fit the last segment duration, END PREV SEGMENT
-                if (currText.toString().strip().length() + w.length() >= 84 || !inRange(wStart, wEnd, lastSegStart, lastSegStart + MAX_SEG_DURATION)) {
+                if (currText.toString().strip().length() + w.length() >= 84 || !inRange(wStart, wEnd, lastSegStart, lastSegStart + MAX_SEG_DURATION)
+                || (lastWordEnd != -1 && wStart - lastWordEnd >= PAUSE_THRESHOLD)) {
                     // end before this word
                     finishSegment(processed, currText, lastSegStart, lastWordEnd);
                     wordCount = 0; lastSegStart = -1; lastWordEnd = -1;

@@ -101,6 +101,19 @@ class SubtitleCacheTests {
     }
 
     @Test
+    void unreadableFileIsKeptAsideSoTheNextSaveCannotWipeIt() throws Exception {
+        Path broken = folder.resolve("cache.json");
+        Files.writeString(broken, "{ this is not json");
+        SubtitleCache cache = new SubtitleCache(broken, clockAt(Instant.parse("2026-01-01T00:00:00Z")));
+        cache.load();
+        cache.save(); // an empty cache now: before the fix this replaced the broken file with {}
+
+        Path backup = folder.resolve("cache.json.unreadable");
+        assertEquals("{ this is not json", Files.readString(backup));
+        assertEquals("{}", Files.readString(broken).strip());
+    }
+
+    @Test
     void saveCreatesTheFolderIfNeeded() {
         Path file = folder.resolve("a").resolve("b").resolve("cache.json");
         SubtitleCache cache = new SubtitleCache(file, clockAt(Instant.parse("2026-01-01T00:00:00Z")));

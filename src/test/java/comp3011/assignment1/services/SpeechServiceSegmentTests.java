@@ -122,15 +122,15 @@ class SpeechServiceSegmentTests {
 
     @Test
     void subtitleIsSplitWhenItWouldRunPastMaxDuration() {
-        // No punctuation. "four" starts at 7.5 s, outside the 7 s window opened by "one" at 0 s, so it starts a new one.
-        var words = List.of(word("one", 0, 1), word("two", 2, 3), word("three", 4, 5), word("four", 7.5, 8));
-        Subtitle[] subs = service.processSegments(List.of(clean("one two three four", 0, 8)), words);
+        // No punctuation or pauses: "four" ends at 7.5 s, past the 7 s window from "one", so it starts a new one.
+        var words = List.of(word("one", 0, 2), word("two", 2, 4), word("three", 4, 6.5), word("four", 6.5, 7.5));
+        Subtitle[] subs = service.processSegments(List.of(clean("one two three four", 0, 7.5)), words);
 
         assertEquals(2, subs.length);
         assertEquals("one two three", subs[0].text().trim());
-        assertEquals(5.0, subs[0].end(), 0.001);
+        assertEquals(6.5, subs[0].end(), 0.001);
         assertEquals("four", subs[1].text().trim());
-        assertEquals(7.5, subs[1].start(), 0.001);
+        assertEquals(6.5, subs[1].start(), 0.001);
     }
 
     @Test
@@ -143,5 +143,61 @@ class SpeechServiceSegmentTests {
         assertEquals(9, subs[0].text().trim().split(" ").length);
         assertEquals(3, subs[1].text().trim().split(" ").length);
         assertTrue(subs[0].text().trim().length() < 84);
+    }
+
+    // ---- Pause rule: PAUSE_THRESHOLD = 0.9 s ----
+    // Gaps sit just either side of it (1.0 s splits, 0.8 s doesn't), so changing the threshold breaks a test.
+
+    @Test
+    void pauseStartsANewSubtitleEvenWithoutEnoughWordsForPunctuation() {
+        // "Hi." is below the 3-word punctuation threshold, so only the 1.0 s pause can split it from "Who's there?".
+        var words = List.of(word("Hi.", 0, 0.4), word("Who's", 1.4, 1.7), word("there?", 1.7, 2.2));
+        Subtitle[] subs = service.processSegments(List.of(clean("Hi. Who's there?", 0, 2.2)), words);
+
+        assertEquals(2, subs.length);
+        assertEquals("Hi.", subs[0].text().trim());
+        assertEquals(0.0, subs[0].start(), 0.001);
+        assertEquals(0.4, subs[0].end(), 0.001);
+        assertEquals("Who's there?", subs[1].text().trim());
+        assertEquals(1.4, subs[1].start(), 0.001);
+        assertEquals(2.2, subs[1].end(), 0.001);
+    }
+
+    @Test
+    void pauseStartsANewSubtitleWithoutPunctuation() {
+        // No punctuation and well inside 7 s, so only the 1.0 s pause after "we" can split it.
+        var words = List.of(word("so", 0, 0.3), word("then", 0.3, 0.6), word("we", 0.6, 1.0),
+                word("went", 2.0, 2.3), word("home", 2.3, 2.8));
+        Subtitle[] subs = service.processSegments(List.of(clean("so then we went home", 0, 2.8)), words);
+
+        assertEquals(2, subs.length);
+        assertEquals("so then we", subs[0].text().trim());
+        assertEquals(1.0, subs[0].end(), 0.001);
+        assertEquals("went home", subs[1].text().trim());
+        assertEquals(2.0, subs[1].start(), 0.001);
+    }
+
+    @Test
+    void pauseAcrossASegmentBoundaryAlsoSplits() {
+        // Whisper often ends a segment at a pause, so the text mustn't carry into the next one (1.0 s gap).
+        var segments = List.of(clean("I know", 0, 0.8), clean("you do", 1.8, 2.4));
+        var words = List.of(word("I", 0, 0.3), word("know", 0.3, 0.8), word("you", 1.8, 2.1), word("do", 2.1, 2.4));
+        Subtitle[] subs = service.processSegments(segments, words);
+
+        assertEquals(2, subs.length);
+        assertEquals("I know", subs[0].text().trim());
+        assertEquals("you do", subs[1].text().trim());
+        assertEquals(1.8, subs[1].start(), 0.001);
+    }
+
+    @Test
+    void gapJustUnderThePauseThresholdDoesNotSplit() {
+        // 0.8 s between every word is under 0.9 s, so it stays one subtitle.
+        var words = List.of(word("this", 0, 0.3), word("is", 1.1, 1.3), word("one", 2.1, 2.4),
+                word("line", 3.2, 3.5));
+        Subtitle[] subs = service.processSegments(List.of(clean("this is one line", 0, 3.5)), words);
+
+        assertEquals(1, subs.length);
+        assertEquals("this is one line", subs[0].text().trim());
     }
 }
